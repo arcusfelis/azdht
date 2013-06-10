@@ -12,9 +12,13 @@
          lower_version/2,
          proto_version_num/1,
          action_name/1,
+         action_reply_name/1,
+         action_request_name/1,
          action_request_num/1,
          action_reply_num/1,
-         diversification_type/1
+         diversification_type/1,
+         random_key/0,
+         encode_key/1
         ]).
 
 %% Spoof id
@@ -150,7 +154,7 @@ furthest_contact(MyContact) ->
     MyID = node_id(MyContact),
     CFactor = ?K * 2,
     %% Get alive nodes.
-    Closest = etorrent_azdht_router:closest_to(MyID, CFactor, true),
+    Closest = azdht_router:closest_to(MyID, CFactor, true),
     lists:last(Closest).
 
 %% For main network (not CVS).
@@ -265,6 +269,23 @@ action_name(ActionNum) when is_integer(ActionNum) ->
         _    -> undefined
     end.
 
+action_reply_name(ActionNum) when is_integer(ActionNum) ->
+    case ActionNum of
+        1025 -> ping;
+        1029 -> find_node;
+        1031 -> find_value;
+        1032 -> error; %% Special care
+        _    -> undefined
+    end.
+
+action_request_name(ActionNum) when is_integer(ActionNum) ->
+    case ActionNum of
+        1024 -> ping;
+        1028 -> find_node;
+        1030 -> find_value;
+        _    -> undefined
+    end.
+
 diversification_type(1) -> none;
 diversification_type(2) -> frequency;
 diversification_type(3) -> size.
@@ -294,6 +315,13 @@ pkcs5_padding(Bin) when is_binary(Bin) ->
 
 generate_spoof_key() ->
     crypto:strong_rand_bytes(8).
+
+random_key() ->
+    crypto:strong_rand_bytes(20).
+
+encode_key(Key) ->
+    crypto:sha(Key).
+
 
 -ifdef(TEST).
 %% DES INPUT BLOCK  = f  o  r  _  _  _  _  _

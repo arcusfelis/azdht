@@ -4,3 +4,4 @@ ebin/*.app
 log/*
 .eunit
 doc/
+logs/*

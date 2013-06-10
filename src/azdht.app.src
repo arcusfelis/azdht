@@ -9,16 +9,7 @@
         crypto, public_key, ssl,
         gproc
       ]},
-%   {mod, {azdht_app, []}},
+    {mod, {azdht_app, []}},
     {env, []}
     ]
 }.
-
-
-
-
-
-
-
-
-

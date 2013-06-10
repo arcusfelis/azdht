@@ -1,13 +1,13 @@
 %% @author Uvarov Michael <freeakk@gmail.com>
 %% @end
--module(azdht_search).
+-module(azdht_find_value).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -behaviour(gen_server).
--import(etorrent_azdht, [
+-import(azdht, [
         compact_contact/1,
         compact_contacts/1,
         node_id/1]).
@@ -29,7 +29,8 @@
 
 -record(state, {
     key, encoded_key, called_contacts, waiting_contacts,
-    collected_values, answered_contacts, answered_count
+    collected_values, answered_contacts, answered_count,
+    subscribers
 }).
 
 %
@@ -45,13 +46,15 @@
 %
 % Public interface
 %
+%-spec find_value(Key, Contacts) -> Values.
 find_value(Key, Contacts) ->
-    gen_server:start_link(?MODULE, [Key, Contacts], []).
+    {ok, Pid} = gen_server:start_link(?MODULE, [Key, Contacts], []),
+    gen_server:call(Pid, subscribe, 60000).
 
 %% ==================================================================
 
 init([Key, Contacts]) ->
-    EncodedKey = encode_key(Key),
+    EncodedKey = azdht:encode_key(Key),
     [async_find_value(Contact, EncodedKey) || Contact <- Contacts],
     State = #state{key=Key,
                    encoded_key=EncodedKey,
@@ -59,12 +62,13 @@ init([Key, Contacts]) ->
                    waiting_contacts=[],
                    collected_values=[],
                    answered_count=0,
-                   answered_contacts=sets:new()},
+                   answered_contacts=sets:new(),
+                   subscribers=[]},
     schedule_next_step(),
     {ok, State}.
 
-handle_call(x, From, State) ->
-    {reply, x, State}.
+handle_call(subscribe, From, State=#state{subscribers=Subscribers}) ->
+    {noreply, State#state{subscribers=[From|Subscribers]}}.
 
 handle_cast({async_find_value_reply, Contact,
              #find_value_reply{has_values=false,
@@ -98,18 +102,21 @@ handle_info(next_step,
                          waiting_contacts=[],
                          collected_values=[]}) ->
     lager:debug("Key ~p was not found.", [Key]),
-    {noreply, State};
+    reply_to_subscribers(State),
+    {stop, normal, State};
 handle_info(next_step,
             State=#state{collected_values=Values,
                          answered_count=AnsweredCount}) when AnsweredCount > 3 ->
     lager:debug("Values ~p", [Values]),
-    {noreply, State};
+    reply_to_subscribers(State),
+    {stop, normal, State};
 handle_info(next_step,
             State=#state{collected_values=Values,
                          waiting_contacts=[],
                          answered_count=AnsweredCount}) when AnsweredCount > 0 ->
     lager:debug("Not enough nodes were called. Values ~p", [Values]),
-    {noreply, State};
+    reply_to_subscribers(State),
+    {stop, normal, State};
 handle_info(next_step,
             State=#state{encoded_key=EncodedKey,
                          called_contacts=Contacts,
@@ -136,16 +143,13 @@ code_change(_, _, State) ->
 async_find_value(Contact, EncodedKey) ->
     Parent = self(),
     spawn_link(fun() ->
-            case etorrent_azdht_net:find_value(Contact, EncodedKey) of
+            case azdht_net:find_value(Contact, EncodedKey) of
                 {ok, Reply} ->
                     gen_server:cast(Parent, {async_find_value_reply, Contact, Reply});
                 {error, Reason} ->
                     gen_server:cast(Parent, {async_find_value_error, Contact, Reason})
             end
         end).
-
-encode_key(Key) ->
-    crypto:sha(Key).
 
 compute_distance(<<ID1:160>>, <<ID2:160>>) ->
     <<(ID1 bxor ID2):160>>.
@@ -171,3 +175,9 @@ best_contacts(Contacts, EncodedKey) ->
 schedule_next_step() ->
     erlang:send_after(5000, self(), next_step),
     ok.
+
+
+
+reply_to_subscribers(#state{collected_values=Values,
+                            subscribers=Subscribers}) ->
+    [gen_server:reply(Subscriber, Values) || Subscriber <- Subscribers].

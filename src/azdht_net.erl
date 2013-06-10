@@ -11,20 +11,27 @@
 
 
 % Public interface
--export([start_link/2,
+-export([start_link/3,
          node_port/0,
+         my_contact/0,
          ping/1,
          find_node/2,
          find_value/2,
          get_peers/2,
          announce/4]).
 
--import(etorrent_azdht, [
+%% Needs a router.
+-export([find_node/1,
+         find_value/1]).
+
+-import(azdht, [
          higher_or_equal_version/2,
          lower_version/2,
          proto_version_num/1,
-         action_name/1,
+         action_reply_num/1,
+         action_reply_name/1,
          action_request_num/1,
+         action_request_name/1,
          diversification_type/1,
          diversification_type_num/1
         ]).
@@ -71,22 +78,26 @@ srv_name() ->
 query_timeout() ->
     3000.
 
-socket_options() ->
-    [list, inet, {active, true}, {mode, binary}].
-%   ++ case etorrent_config:listen_ip() of all -> []; IP -> [{ip, IP}] end.
+socket_options(ListenIP) ->
+    [list, inet, {active, true}, {mode, binary}]
+    ++ case ListenIP of all -> []; ListenIP -> [{ip, ListenIP}] end.
 
 
 %
 % Public interface
 %
-start_link(DHTPort, ExternalIP) ->
-    gen_server:start_link({local, srv_name()}, ?MODULE, [DHTPort, ExternalIP], []).
+start_link(ListenIP, ListenPort, ExternalIP) ->
+    Args = [ListenIP, ListenPort, ExternalIP],
+    gen_server:start_link({local, srv_name()}, ?MODULE, Args, []).
 
 
 -spec node_port() -> portnum().
 node_port() ->
     gen_server:call(srv_name(), get_node_port).
 
+-spec my_contact() -> contact().
+my_contact() ->
+    gen_server:call(srv_name(), my_contact).
 
 %
 %
@@ -149,6 +160,18 @@ announce(Contact, InfoHash, Token, BTPort) ->
 
 
 %% ==================================================================
+-spec find_node(nodeid()) -> list(contact()).
+find_node(NodeID) ->
+    Contacts = azdht_router:closest_to(NodeID),
+    azdht_find_node:find_node(NodeID, Contacts).
+
+-spec find_value(key()) -> list(value()).
+find_value(Key) ->
+    EncodedKey = azdht:encode_key(Key),
+    Contacts = azdht_router:closest_to(EncodedKey),
+    azdht_find_value:find_value(Key, Contacts).
+
+%% ==================================================================
 
 %% @private
 forward_reply(SocketPid, Address, Reply) ->
@@ -156,14 +179,14 @@ forward_reply(SocketPid, Address, Reply) ->
 
 %% ==================================================================
 
-init([DHTPort, ExternalIP]) ->
-    {ok, Socket} = gen_udp:open(DHTPort, socket_options()),
-    LocalContact = etorrent_azdht:contact(proto_version_num(supported),
-                                          ExternalIP, DHTPort),
+init([ListenIP, ListenPort, ExternalIP]) ->
+    {ok, Socket} = gen_udp:open(ListenPort, socket_options(ListenIP)),
+    LocalContact = azdht:contact(proto_version_num(supported),
+                                          ExternalIP, ListenPort),
     State = #state{socket=Socket,
                    sent=gb_trees:empty(),
                    local_contact=LocalContact,
-                   node_address={ExternalIP, DHTPort},
+                   node_address={ExternalIP, ListenPort},
                    next_transaction_id=new_transaction_id(),
                    instance_id=new_instance_id()},
     {ok, State}.
@@ -197,7 +220,11 @@ handle_call(get_node_port, _From, State) ->
     #state{
         socket=Socket} = State,
     {ok, {_, Port}} = inet:sockname(Socket),
-    {reply, Port, State}.
+    {reply, Port, State};
+handle_call(my_contact, _From, State) ->
+    #state{local_contact=MyContact} = State,
+    {reply, MyContact, State}.
+
 
 handle_cast({forward_reply, {IP, Port}, EncodedReply}, State) ->
     #state{socket=Socket} = State,
@@ -228,8 +255,8 @@ handle_info({timeout, _, IP, Port, ID}, State) ->
 
 handle_info({udp, _Socket, IP, Port, Packet},
             #state{instance_id=MyInstanceId} = State) ->
-    io:format(user, "Receiving a packet from ~p:~p~n", [IP, Port]),
-    io:format(user, "~p~n", [Packet]),
+    lager:debug("Receiving a packet from ~p:~p~n", [IP, Port]),
+    lager:debug("Data: ~p~n", [Packet]),
     SocketPid = self(),
     NewState =
     case packet_type(Packet) of
@@ -265,16 +292,16 @@ code_change(_, _, State) ->
 handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
     {RequestHeader, Body} = decode_request_header(Packet),
     #request_header{
-        action=ActionNum,
+        action=RequestActionNum,
         transaction_id=TranId,
         connection_id=ConnId,
         protocol_version=Version
     } = RequestHeader,
-    io:format("Decoded header: ~ts~n", [pretty(RequestHeader)]),
-    io:format("Body: ~p~n", [Body]),
-    Action = action_name(ActionNum),
+    lager:debug("Decoded header: ~ts~n", [pretty(RequestHeader)]),
+    lager:debug("Body: ~p~n", [Body]),
+    Action = action_request_name(RequestActionNum),
     {RequestBody, _} = decode_request_body(Action, Version, Body),
-    io:format("Decoded body: ~ts~n", [pretty(RequestBody)]),
+    lager:debug("Decoded body: ~ts~n", [pretty(RequestBody)]),
     Result = 
     case Action of
         ping ->
@@ -286,9 +313,10 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
     end,
     case Result of
         {ok, ReplyArgs} ->
+        ReplyActionNum = action_reply_num(Action),
         PacketVersion = min(proto_version_num(supported), Version),
         ReplyHeader = #reply_header{
-            action=ActionNum,
+            action=ReplyActionNum,
             connection_id=ConnId,
             transaction_id=TranId,
             protocol_version=PacketVersion,
@@ -307,11 +335,12 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
 handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
     try decode_reply_header(Packet) of
     {ReplyHeader, Body} ->
+        %% TODO: check instance_id
         #reply_header{action=ActionNum,
                       connection_id=ConnId,
                       protocol_version=Version} = ReplyHeader,
-        io:format(user, "Reply ~ts~n", [pretty(ReplyHeader)]),
-        case action_name(ActionNum) of
+        lager:debug("Received reply header ~ts~n", [pretty(ReplyHeader)]),
+        case action_reply_name(ActionNum) of
         undefined ->
             lager:debug("Unknown action ~p.", [ActionNum]),
             State;
@@ -364,7 +393,7 @@ do_send_query(Action, Args, #contact{version=Version,
     case gen_udp:send(Socket, IP, Port, Request) of
         ok ->
             TRef = timeout_reference(IP, Port, ConnId),
-%           lager:info("Sent ~w to ~w:~w", [Action, IP, Port]),
+            lager:info("Sent ~w to ~w:~w", [Action, IP, Port]),
 
             NewSent = store_sent_query(IP, Port, ConnId, From, TRef, Action, Sent),
             NewState = State#state{
@@ -372,39 +401,47 @@ do_send_query(Action, Args, #contact{version=Version,
                     next_transaction_id=next_transaction_id(TranId)},
             {noreply, NewState};
         {error, einval} ->
-%           lager:error("Error (einval) when sending ~w to ~w:~w",
-%                       [Action, IP, Port]),
+            lager:error("Error (einval) when sending ~w to ~w:~w",
+                        [Action, IP, Port]),
             {reply, timeout, State};
         {error, eagain} ->
-%           lager:error("Error (eagain) when sending ~w to ~w:~w",
-%                       [Action, IP, Port]),
+            lager:error("Error (eagain) when sending ~w to ~w:~w",
+                        [Action, IP, Port]),
             {reply, timeout, State}
     end.
 
 
-unique_connection_id(IP, Port, Open) ->
+unique_connection_id(IP, Port, Sent) ->
     ConnId = new_connection_id(),
-    IsLocal  = gb_trees:is_defined(tkey(IP, Port, ConnId), Open),
-    if IsLocal -> unique_connection_id(IP, Port, Open);
+    IsLocal  = gb_trees:is_defined(tkey(IP, Port, ConnId), Sent),
+    if IsLocal -> unique_connection_id(IP, Port, Sent);
        true    -> ConnId
     end.
 
-store_sent_query(IP, Port, ID, Client, Timeout, Action, Open) ->
-    K = tkey(IP, Port, ID),
+store_sent_query(IP, Port, ConnId, Client, Timeout, Action, Sent) ->
+    K = tkey(IP, Port, ConnId),
+    lager:debug("Waiting transaction ~p.", [K]),
     V = tval(Client, Timeout, Action),
-    gb_trees:insert(K, V, Open).
+    gb_trees:insert(K, V, Sent).
 
-find_sent_query(IP, Port, ID, Open) ->
-    case gb_trees:lookup(tkey(IP, Port, ID), Open) of
-       none -> error;
-       {value, Value} -> {ok, Value}
+find_sent_query(IP, Port, ConnId, Sent) ->
+    K = tkey(IP, Port, ConnId),
+    case gb_trees:lookup(K, Sent) of
+       none ->
+            lager:debug("Unexpected transaction ~p.", [K]),
+            error;
+       {value, Value} ->
+            lager:debug("Handling transaction ~p.", [K]),
+            {ok, Value}
     end.
 
-clear_sent_query(IP, Port, ID, Open) ->
-    gb_trees:delete(tkey(IP, Port, ID), Open).
+clear_sent_query(IP, Port, ConnId, Sent) ->
+    K = tkey(IP, Port, ConnId),
+    lager:debug("Cancel transaction ~p.", [K]),
+    gb_trees:delete(K, Sent).
 
-tkey(IP, Port, ID) ->
-   {IP, Port, ID}.
+tkey(IP, Port, ConnId) ->
+   {IP, Port, ConnId}.
 
 tval(Client, TimeoutRef, Action) ->
     {Client, TimeoutRef, Action}.
@@ -424,7 +461,6 @@ decode_byte(<<H, T/binary>>) -> {H, T}.
 decode_short(<<H:16/big-integer, T/binary>>) -> {H, T}.
 decode_int(<<H:32/big-integer, T/binary>>) -> {H, T}.
 decode_long(<<H:64/big-integer, T/binary>>) -> {H, T}.
-decode_connection_id(<<1:1, H:63/big-integer, T/binary>>) -> {H, T}.
 decode_none(Bin) -> {undefined, Bin}.
 decode_float(<<H:32/big-float, T/binary>>) -> {H, T}.
 %% transport/udp/impl/DHTUDPUtils.java:    deserialiseVivaldi
@@ -479,7 +515,7 @@ decode_address(<<4, A, B, C, D, Port:16/big-integer, T/binary>>) ->
 %% the rest is an address.
 decode_contact(<<1, ProtoVer, T/binary>>) ->
     {Address, T1} = decode_address(T),
-    {etorrent_azdht:contact(ProtoVer, Address), T1}.
+    {azdht:contact(ProtoVer, Address), T1}.
 
 
 decode_contacts(Bin) ->
@@ -955,7 +991,7 @@ decode_error(Version, Bin) ->
     {'TODO', Bin}.
 
 decode_request_header(Bin) ->
-    {ConnId,  Bin1} = decode_connection_id(Bin),
+    {ConnId,  Bin1} = decode_long(Bin),
     {Action,  Bin2} = decode_int(Bin1),
     {TranId,  Bin3} = decode_int(Bin2),
     {Version, Bin4} = decode_byte(Bin3),

@@ -1,11 +1,11 @@
 -define(K, 20).
--type nodeinfo() :: etorrent_types:nodeinfo().
--type peerinfo() :: etorrent_types:peerinfo().
--type infohash() :: etorrent_types:infohash().
--type token() :: etorrent_types:token().
--type ipaddr() :: etorrent_types:ipaddr().
--type nodeid() :: etorrent_types:nodeid().
--type portnum() :: etorrent_types:portnum().
+-type nodeinfo() :: azdht_types:nodeinfo().
+-type peerinfo() :: azdht_types:peerinfo().
+-type infohash() :: azdht_types:infohash().
+-type token() :: azdht_types:token().
+-type ipaddr() :: azdht_types:ipaddr().
+-type nodeid() :: azdht_types:nodeid().
+-type portnum() :: azdht_types:portnum().
 
 -type long()  :: non_neg_integer().
 -type int()   :: non_neg_integer().
@@ -20,6 +20,8 @@
 -type proto_version() :: atom() | non_neg_integer().
 -type key() :: binary().
 -type diversification() :: int().
+-type value_group() :: [value()].
+-type value() :: binary().
 
 -record(position, {
     x = 0 :: float(),
@@ -161,7 +163,7 @@
     diversification_type :: diversification_type(),
     %% Values that match searched key.
     %% HAS_VALUES == true
-    values % value_group() 
+    values :: value_group() 
 }).
 
 -record(store_request, {
@@ -174,7 +176,7 @@
     keys :: [key()],
     %% Groups of values, one for each key;
     %% values are stored in the same order as keys.
-    value_groups % [value_group()]
+    value_groups :: [value_group()]
 }).
 
 -record(store_reply, {
