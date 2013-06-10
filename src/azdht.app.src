@@ -1,0 +1,24 @@
+{application, azdht,
+    [
+    {description, "Vuze DHT in Erlang"},
+    {vsn, "0.1"},
+    {applications, [
+        kernel,
+        stdlib,
+        syntax_tools, compiler, lager,
+        crypto, public_key, ssl,
+        gproc
+      ]},
+%   {mod, {azdht_app, []}},
+    {env, []}
+    ]
+}.
+
+
+
+
+
+
+
+
+
