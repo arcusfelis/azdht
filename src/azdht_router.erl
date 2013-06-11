@@ -86,16 +86,6 @@
 
 -include_lib("kernel/include/inet.hrl").
 
-%
-% The server has started to use integer IDs internally, before the
-% rest of the program does that, run these functions whenever an ID
-% enters or leaves this process.
-%
-ensure_bin_id(ID) when is_binary(ID)  -> ID;
-ensure_bin_id(ID) when is_integer(ID) -> <<ID:160>>.
-ensure_int_id(ID) when is_integer(ID) -> ID;
-ensure_int_id(<<ID:160>>)             -> ID.
-
 srv_name() ->
     azdht_router.
 
@@ -343,7 +333,7 @@ init([MyContact, StateFile]) ->
     end, InitBTimers, b_ranges(Buckets)),
 
     State = #state{
-        node_id=ensure_int_id(MyNodeID),
+        node_id=MyNodeID,
         buck_timers=BTimers,
         state_file=StateFile},
     {ok, State}.
@@ -546,7 +536,7 @@ handle_call({dump_state, StateFile}, _From, State) ->
 
 handle_call(node_id, _From, State) ->
     #state{node_id=Self} = State,
-    {reply, ensure_int_id(Self), State}.
+    {reply, Self, State}.
 
 %% @private
 handle_cast(_, State) ->
@@ -672,8 +662,9 @@ code_change(_, _, State) ->
 % Create a new bucket list
 %
 b_new() ->
-    MaxID = trunc(math:pow(2, 160)),
-    [{0, MaxID, []}].
+    MinID = <<0:160>>,
+    MaxID = <<-1:160>>,
+    [{MinID, MaxID, []}].
 
 %
 % Insert a new node into a bucket list
@@ -686,19 +677,19 @@ b_insert_(Self, ID, Contact, [{Min, Max, Members}|T])
 when ?in_range(ID, Min, Max), ?in_range(Self, Min, Max) ->
     NumMembers = length(Members),
     if  NumMembers < ?K ->
-            NewMembers = ordsets:add_element(Contact, Members),
-            [{Min, Max, NewMembers}|T];
+        NewMembers = ordsets:add_element(Contact, Members),
+        [{Min, Max, NewMembers}|T];
 
-        NumMembers == ?K, (Max - Min) > 2 ->
-            Diff  = Max - Min,
-            Half  = Max - (Diff div 2),
+        NumMembers == ?K ->
+        Half = b_between(Min, Max),
+        if  Half =/= Max, Half =/= Min ->
             Lower = [N || N <- Members, ?in_range(azdht:node_id(N), Min, Half)],
             Upper = [N || N <- Members, ?in_range(azdht:node_id(N), Half, Max)],
             WithSplit = [{Min, Half, Lower}, {Half, Max, Upper}|T],
             b_insert_(Self, ID, Contact, WithSplit);
-
-        NumMembers == ?K ->
+        true -> 
            [{Min, Max, Members}|T]
+        end
     end;
 
 b_insert_(_, ID, Contact, [{Min, Max, Members}|T])
@@ -714,17 +705,11 @@ when ?in_range(ID, Min, Max) ->
 b_insert_(Self, ID, Contact, [H|T]) ->
     [H|b_insert_(Self, ID, Contact, T)].
 
-%
-% Get all ranges present in a bucket list
-%
-b_ranges([]) ->
-    [];
-b_ranges([{Min, Max, _}|T]) ->
-    [{Min, Max}|b_ranges(T)].
+%% Get all ranges present in a bucket list
+b_ranges(Buckets) ->
+    [{Min, Max} || {Min, Max, _} <- Buckets].
 
-%
-% Delete a node from a bucket list
-%
+%% @doc Delete a node from a bucket list
 b_delete(_Contact, []) ->
     [];
 b_delete(Contact=#contact{node_id=ID}, [{Min, Max, Members}|T])
@@ -734,9 +719,7 @@ when ?in_range(ID, Min, Max) ->
 b_delete(Contact, [H|T]) ->
     [H|b_delete(Contact, T)].
 
-%
-% Return all members of the bucket that this node is a member of
-%
+%% @doc Return all members of the bucket that this node is a member of
 b_members({Min, Max}, [{Min, Max, Members}|_]) ->
     Members;
 b_members({Min, Max}, [_|T]) ->
@@ -749,9 +732,7 @@ b_members(ID, [_|T]) ->
     b_members(ID, T).
 
 
-%
-% Check if a node is a member of a bucket list
-%
+%% @doc Check if a node is a member of a bucket list
 b_is_member(_Contact, []) ->
     false;
 b_is_member(Contact=#contact{node_id=ID}, [{Min, Max, Members}|_])
@@ -760,9 +741,7 @@ when ?in_range(ID, Min, Max) ->
 b_is_member(Contact, [_|T]) ->
     b_is_member(Contact, T).
 
-%
-% Check if a bucket exists in a bucket list
-%
+%% @doc Check if a bucket exists in a bucket list
 b_has_bucket({_, _}, []) ->
     false;
 b_has_bucket({Min, Max}, [{Min, Max, _}|_]) ->
@@ -770,21 +749,22 @@ b_has_bucket({Min, Max}, [{Min, Max, _}|_]) ->
 b_has_bucket({Min, Max}, [{_, _, _}|T]) ->
     b_has_bucket({Min, Max}, T).
 
-%
-% Return a list of all members, combined, in all buckets.
-%
+%% @doc Return a list of all members, combined, in all buckets.
 b_node_list([]) ->
     [];
 b_node_list([{_, _, Members}|T]) ->
     Members ++ b_node_list(T).
 
-%
-% Return the range of the bucket that a node falls within
-%
+%% @doc Return the range of the bucket that a node falls within
 b_range(ID, [{Min, Max, _}|_]) when ?in_range(ID, Min, Max) ->
     {Min, Max};
 b_range(ID, [_|T]) ->
     b_range(ID, T).
+
+b_between(<<Min:160>>, <<Max:160>>) ->
+    Diff = Max - Min,
+    Half = Max - (Diff div 2),
+    <<Half:160>>.
 
 
 
@@ -809,8 +789,8 @@ del_timer(Item, Timers) ->
     _ = erlang:cancel_timer(TRef),
     gb_trees:delete(Item, Timers).
 
-node_timer_from(Time, Timeout, {ID, IP, Port}) ->
-    Msg = {inactive_node, ID, IP, Port},
+node_timer_from(Time, Timeout, Contact) ->
+    Msg = {inactive_node, Contact},
     timer_from(Time, Timeout, Msg).
 
 bucket_timer_from(Time, BTimeout, LeastRecent, NTimeout, Range) ->

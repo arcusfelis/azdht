@@ -116,9 +116,13 @@ ping(Contact) ->
 find_node(Contact, Target)  ->
     case gen_server:call(srv_name(), {find_node, Contact, Target}) of
         timeout -> {error, timeout};
-        Values  -> decode_reply_body(find_node, Values)
-            % TODO
-%           etorrent_dht_state:log_request_success(ID, IP, Port),
+        Values  ->
+            case decode_reply_body(find_node, Values) of
+                {error, Reason} -> {error, Reason};
+                {ok, Reply} ->
+                    azdht_router:log_request_from(Contact),
+                    {ok, Reply}
+            end
     end.
 
 
@@ -330,6 +334,7 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
         Reply = [encode_reply_header(ReplyHeader)
                 |encode_reply_body(Action, PacketVersion, ReplyArgs)],
         forward_reply(SocketPid, Address, Reply),
+        azdht_router:safe_insert_node(SenderContact),
         ok;
     {error, Reason} ->
         lager:debug("Error ~p.", [Reason]),

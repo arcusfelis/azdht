@@ -16,7 +16,9 @@
 -export([ping/0,
          ping/1,
          find_node/0,
-         find_node/1]).
+         find_node/1,
+         find_node2/0,
+         find_node2/1]).
 
 
 suite() ->
@@ -35,11 +37,13 @@ init_per_suite(Config) ->
     %% Start slave nodes.
     {ok, Node1} = test_server:start_node(node1, slave, []),
     {ok, Node2} = test_server:start_node(node2, slave, []),
+    {ok, Node3} = test_server:start_node(node3, slave, []),
     %% Run logger on the slave nodes
     [prepare_node(Node, Name)
-     || {Node, Name} <- [{Node1, "N1"}, {Node2, "N2"}]],
+     || {Node, Name} <- [{Node1, "N1"}, {Node2, "N2"}, {Node3, "N3"}]],
     [{node1, Node1},
-     {node2, Node2} | Config].
+     {node2, Node2},
+     {node3, Node3}| Config].
 
 
 
@@ -67,6 +71,19 @@ init_per_testcase(find_node, Config) ->
     Node2Conf = node2_configuration(Node2),
     start_app(Node1, Node1Conf),
     start_app(Node2, Node2Conf),
+    Config;
+
+init_per_testcase(find_node2, Config) ->
+    %% More nodes
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Node3 = ?config(node3, Config),
+    Node1Conf = node1_configuration(Node1),
+    Node2Conf = node2_configuration(Node2),
+    Node3Conf = node3_configuration(Node3),
+    start_app(Node1, Node1Conf),
+    start_app(Node2, Node2Conf),
+    start_app(Node3, Node3Conf),
     Config.
 
 
@@ -82,28 +99,43 @@ end_per_testcase(find_node, Config) ->
     Node2 = ?config(node2, Config),
     stop_app(Node1),
     stop_app(Node2),
+    ok;
+
+end_per_testcase(find_node2, Config) ->
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Node3 = ?config(node3, Config),
+    stop_app(Node1),
+    stop_app(Node2),
+    stop_app(Node3),
     ok.
 
 %% Configuration
 %% ----------------------------------------------------------------------
 
-node1_configuration(Dir) ->
+node1_configuration(_) ->
     [{listen_ip, {127,0,0,2}},
      {external_ip, {127,0,0,2}},
      {listen_port, 43301 }
     | ct:get_config(common_conf)].
 
-node2_configuration(Dir) ->
+node2_configuration(_) ->
     [{listen_ip, {127,0,0,3}},
      {external_ip, {127,0,0,3}},
      {listen_port, 43302 }
+    | ct:get_config(common_conf)].
+
+node3_configuration(_) ->
+    [{listen_ip, {127,0,0,4}},
+     {external_ip, {127,0,0,4}},
+     {listen_port, 43303 }
     | ct:get_config(common_conf)].
 
 
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    Tests = [ping, find_node],
+    Tests = [ping, find_node, find_node2],
 %   [{main_group, [shuffle], Tests}].
     [{main_group, [], Tests}].
 
@@ -135,14 +167,33 @@ find_node(Config) ->
     Node2 = ?config(node2, Config),
     Contact1 = azdht_node:my_contact(Node1),
     Contact2 = azdht_node:my_contact(Node2),
-    %% Just ping Node2 from Node1.
-    PingResult = azdht_node:ping(Node1, Contact2),
-    ct:pal("PingResult ~p", [PingResult]),
     %% Request Node2 from Node1 to identify yourself.
     FindNodeResult = azdht_node:find_node(Node1, Contact2, azdht:node_id(Contact1)),
     ct:pal("FindNodeResult ~p", [FindNodeResult]),
     case FindNodeResult of
         {ok, #find_node_reply{contacts=[]}} -> ok
+    end.
+
+
+find_node2() ->
+    [{require, common_conf, azdht_common_config}].
+
+find_node2(Config) ->
+    io:format("~n======START FIND NODE WITH A MIDDLEMAN TEST CASE======~n", []),
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Node3 = ?config(node2, Config),
+    Contact1 = azdht_node:my_contact(Node1),
+    Contact2 = azdht_node:my_contact(Node2),
+    Contact3 = azdht_node:my_contact(Node3),
+    %% Just ping Node3 from Node1 and Node2.
+    {ok, _} = azdht_node:ping(Node1, Contact3),
+    {ok, _} = azdht_node:ping(Node2, Contact3),
+    %% Request Node3 from Node1 to lookup for Node2.
+    FindNodeResult = azdht_node:find_node(Node1, Contact3, azdht:node_id(Contact2)),
+    ct:pal("FindNodeResult ~p", [FindNodeResult]),
+    case FindNodeResult of
+        {ok, #find_node_reply{contacts=[Contact1]}} -> ok
     end.
 
 
