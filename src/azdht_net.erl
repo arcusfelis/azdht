@@ -17,8 +17,7 @@
          ping/1,
          find_node/2,
          find_value/2,
-         get_peers/2,
-         announce/4]).
+         store/4]).
 
 %% Needs a router.
 -export([find_node/1,
@@ -131,31 +130,17 @@ find_value(Contact, EncodedKey) ->
             decode_reply_body(find_value, Values)
     end.
 
-%
-%
-%
--spec get_peers(contact(), infohash()) ->
-    {nodeid(), token(), list(peerinfo()), list(nodeinfo())}.
-get_peers(Contact, InfoHash) ->
-    Call = {get_peers, Contact, InfoHash},
-    case gen_server:call(srv_name(), Call) of
-        timeout ->
-            {error, timeout};
-        Values ->
-            decode_reply_body(get_peers, Values)
-    end.
-
 
 %
 %
 %
--spec announce(contact(), infohash(), token(), portnum()) ->
-    {'error', 'timeout'} | nodeid().
-announce(Contact, InfoHash, Token, BTPort) ->
-    Announce = {announce, Contact, InfoHash, Token, BTPort},
-    case gen_server:call(srv_name(), Announce) of
+-spec store(contact(), spoof_id(), list(key()), list(value_group())) ->
+    {'error', 'timeout'} | {ok, term()}.
+store(Contact, SpoofID, Keys, ValueGroups) ->
+    Msg = {store, Contact, SpoofID, Keys, ValueGroups},
+    case gen_server:call(srv_name(), Msg) of
         timeout -> {error, timeout};
-        Values -> decode_reply_body(announce, Values)
+        Values -> decode_reply_body(store, Values)
     end.
 
 
@@ -206,19 +191,15 @@ handle_call({find_value, Contact, EncodedKey}, From, State) ->
     Args = #find_value_request{id=EncodedKey},
     do_send_query(Action, Args, Contact, From, State);
 
-handle_call({get_peers, Contact, InfoHash}, From, State) ->
-    Action = get_peers,
-    Args = InfoHash,
-    do_send_query(Action, Args, Contact, From, State);
-
-handle_call({announce, Contact, InfoHash, Token, BTPort}, From, State) ->
-    Action = announce,
-    Args = {InfoHash, Token, BTPort},
+handle_call({store, Contact, SpoofID, Keys, ValueGroups}, From, State) ->
+    Action = store,
+    Args = #store_request{spoof_id=SpoofID,
+                          keys=Keys,
+                          value_groups=ValueGroups},
     do_send_query(Action, Args, Contact, From, State);
 
 handle_call(get_node_port, _From, State) ->
-    #state{
-        socket=Socket} = State,
+    #state{socket=Socket} = State,
     {ok, {_, Port}} = inet:sockname(Socket),
     {reply, Port, State};
 handle_call(my_contact, _From, State) ->
@@ -316,10 +297,21 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
                 value_groups=ValueGroups} = RequestBody,
             case azdht_db:store_request(SpoofId, SenderContact,
                                         Keys, ValueGroups) of
-                {ok, Divs} -> ok;
-                {error, _Reason} -> ok
-            end,
-            {error, unknown_action};
+                {ok, Divs} -> {ok, #store_reply{diversifications=Divs}};
+                {error, _Reason} -> {error, _Reason}
+            end;
+        find_node ->
+            NetworkCoordinates = [#position{type=none}],
+            #find_node_request{
+                id=NodeID} = RequestBody,
+            Contacts = azdht_router:closest_to(NodeID),
+            SpoofId = azdht:spoof_id(SenderContact), 
+            Args = #find_node_reply{
+                spoof_id=SpoofId,
+                dht_size=0,
+                network_coordinates=NetworkCoordinates,
+                contacts=Contacts},
+            {ok, Args};
         _ ->
             {error, unknown_action}
     end,

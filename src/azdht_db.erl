@@ -4,7 +4,8 @@
 % Public interface
 -export([start_link/0,
          find_value/1,
-         store_request/4]).
+         store_request/4,
+         secret_key/0]).
 
 % gen_server callbacks
 -export([init/1,
@@ -143,9 +144,7 @@ is_cache_forwarding(SenderContact, ValueGroups) ->
 %
 %-spec find_node(NodeId, Contacts) -> Values.
 start_link() ->
-    {ok, Pid} = gen_server:start_link({local, srv_name()},
-                                      ?MODULE, [], []),
-    gen_server:call(Pid, subscribe, 60000).
+    gen_server:start_link({local, srv_name()}, ?MODULE, [], []).
 
 %% ==================================================================
 
@@ -157,7 +156,7 @@ init([]) ->
     },
     {ok, State}.
 
-handle_call(secret_key, From, State=#state{secret_key=SecretKey}) ->
+handle_call(secret_key, _, State=#state{secret_key=SecretKey}) ->
     {reply, SecretKey, State}.
 
 handle_cast(_, State) ->

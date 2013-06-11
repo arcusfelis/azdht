@@ -27,6 +27,7 @@
 
 %% Spoof id
 -export([generate_spoof_key/0,
+         spoof_id/1,
          spoof_id/4]).
 
 
@@ -171,12 +172,15 @@ print_ip({_,_,_,_, _,_,_,_}=IP) ->
                   "~4.16.0B:~4.16.0B:~4.16.0B:~4.16.0B", tuple_to_list(IP)).
 
 %% @impure
+-spec furthest_contact(contact()) -> contact() | undefined.
 furthest_contact(Contact) ->
     ID = node_id(Contact),
     CFactor = ?K * 2,
     %% Get alive nodes.
-    Closest = azdht_router:closest_to(ID, CFactor),
-    lists:last(Closest).
+    case azdht_router:closest_to(ID, CFactor) of
+        [] -> undefined;
+        Closest -> lists:last(Closest)
+    end.
 
 
 %% @pure
@@ -217,8 +221,20 @@ is_id_in_closest_contacts_1(_, _, _, _, _) -> false.
 %% Spoof ID
 %% ========
 
+%% @impure
+spoof_id(SenderContact) ->
+    MyContact = azdht_net:my_contact(),
+    case azdht:furthest_contact(MyContact) of
+        undefined -> 0;
+        FurthestContact ->
+            SecretKey = azdht_db:secret_key(),
+            spoof_id(SenderContact, MyContact, FurthestContact,
+                     SecretKey)
+    end.
+
 %% For main network (not CVS).
 %% see control/impl/DHTControlImpl.java:generateSpoofID(originator_contact)
+%% @pure
 spoof_id(#contact{}=Contact, MyContact, FurthestContact, SecretKey) ->
     FurthestID = node_id(FurthestContact),
     OriginatorID = node_id(Contact),

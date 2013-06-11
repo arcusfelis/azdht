@@ -22,6 +22,7 @@
 -type diversification() :: int().
 -type value_group() :: [value()].
 -type value() :: binary().
+-type spoof_id() :: int().
 
 -record(position, {
     x = 0 :: float(),
@@ -115,7 +116,7 @@
     %% 0 for bootstrap node,
     %% 1 for ordinary node and ffffffffh for unknown type.
     %% ≥XFER_STATUS
-    node_type :: int(),
+    node_type = 1 :: int(),
     %% Estimated size of the DHT;
     %% Unknown value can be indicated as zero.
     %% ≥SIZE_ESTIMATE
@@ -123,8 +124,6 @@
     %% Network coordinates of replying node.
     %% ≥VIVALDI
     network_coordinates :: network_coordinates(),
-    %% Number of carried contacts.
-    contacts_count :: short(),
     %% List with contacts. 
     contacts :: contacts()
 }).

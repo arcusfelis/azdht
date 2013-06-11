@@ -14,7 +14,9 @@
          end_per_testcase/2]).
 
 -export([ping/0,
-         ping/1]).
+         ping/1,
+         find_node/0,
+         find_node/1]).
 
 
 suite() ->
@@ -56,10 +58,26 @@ init_per_testcase(ping, Config) ->
     Node2Conf = node2_configuration(Node2),
     start_app(Node1, Node1Conf),
     start_app(Node2, Node2Conf),
+    Config;
+
+init_per_testcase(find_node, Config) ->
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Node1Conf = node1_configuration(Node1),
+    Node2Conf = node2_configuration(Node2),
+    start_app(Node1, Node1Conf),
+    start_app(Node2, Node2Conf),
     Config.
 
 
 end_per_testcase(ping, Config) ->
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    stop_app(Node1),
+    stop_app(Node2),
+    ok;
+
+end_per_testcase(find_node, Config) ->
     Node1 = ?config(node1, Config),
     Node2 = ?config(node2, Config),
     stop_app(Node1),
@@ -85,7 +103,7 @@ node2_configuration(Dir) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    Tests = [ping],
+    Tests = [ping, find_node],
 %   [{main_group, [shuffle], Tests}].
     [{main_group, [], Tests}].
 
@@ -106,6 +124,27 @@ ping(Config) ->
     case PingResult of
         {ok, #ping_reply{}} -> ok
     end.
+
+
+find_node() ->
+    [{require, common_conf, azdht_common_config}].
+
+find_node(Config) ->
+    io:format("~n======START FIND NODE TEST CASE======~n", []),
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Contact1 = azdht_node:my_contact(Node1),
+    Contact2 = azdht_node:my_contact(Node2),
+    %% Just ping Node2 from Node1.
+    PingResult = azdht_node:ping(Node1, Contact2),
+    ct:pal("PingResult ~p", [PingResult]),
+    %% Request Node2 from Node1 to identify yourself.
+    FindNodeResult = azdht_node:find_node(Node1, Contact2, azdht:node_id(Contact1)),
+    ct:pal("FindNodeResult ~p", [FindNodeResult]),
+    case FindNodeResult of
+        {ok, #find_node_reply{contacts=[]}} -> ok
+    end.
+
 
 
 %% Helpers
