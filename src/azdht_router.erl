@@ -44,7 +44,7 @@
 -module(azdht_router).
 -behaviour(gen_server).
 -export([srv_name/0,
-         start_link/1,
+         start_link/2,
          node_id/0,
          safe_insert_node/1,
          safe_insert_nodes/1,
@@ -99,10 +99,10 @@ ensure_int_id(<<ID:160>>)             -> ID.
 srv_name() ->
     azdht_router.
 
-start_link(StateFile) ->
+start_link(MyContact, StateFile) ->
     gen_server:start_link({local, srv_name()},
                           ?MODULE,
-                          [StateFile], []).
+                          [MyContact, StateFile], []).
 
 
 %% @doc Return a this node id as an integer.

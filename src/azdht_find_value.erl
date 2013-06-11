@@ -10,7 +10,8 @@
 -import(azdht, [
         compact_contact/1,
         compact_contacts/1,
-        node_id/1]).
+        node_id/1,
+        compute_distance/2]).
 
 
 
@@ -150,9 +151,6 @@ async_find_value(Contact, EncodedKey) ->
                     gen_server:cast(Parent, {async_find_value_error, Contact, Reason})
             end
         end).
-
-compute_distance(<<ID1:160>>, <<ID2:160>>) ->
-    <<(ID1 bxor ID2):160>>.
 
 
 %% Returns all contacts with distance lower than the distance beetween

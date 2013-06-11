@@ -10,7 +10,8 @@
 -import(azdht, [
         compact_contact/1,
         compact_contacts/1,
-        node_id/1]).
+        node_id/1,
+        compute_distance/2]).
 
 
 
@@ -54,7 +55,6 @@ find_node(NodeId, Contacts) ->
 %% ==================================================================
 
 init([NodeId, Contacts]) ->
-    NodeId = encode_key(NodeId),
     [async_find_node(Contact, NodeId) || Contact <- Contacts],
     State = #state{node_id=NodeId,
                    called_contacts=sets:from_list(Contacts),
@@ -120,12 +120,6 @@ async_find_node(Contact, NodeId) ->
                     gen_server:cast(Parent, {async_find_node_error, Contact, Reason})
             end
         end).
-
-encode_key(NodeId) ->
-    crypto:sha(NodeId).
-
-compute_distance(<<ID1:160>>, <<ID2:160>>) ->
-    <<(ID1 bxor ID2):160>>.
 
 
 %% Returns all contacts with distance lower than the distance beetween

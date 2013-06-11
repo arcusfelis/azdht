@@ -6,6 +6,7 @@
          contacts/1,
          compact_contact/1,
          compact_contacts/1,
+         my_contact/2,
          node_id/1,
          node_id/3,
          higher_or_equal_version/2,
@@ -18,7 +19,10 @@
          action_reply_num/1,
          diversification_type/1,
          random_key/0,
-         encode_key/1
+         encode_key/1,
+         closest_to/3,
+         is_id_in_closest_contacts/3,
+         furthest_contact/1
         ]).
 
 %% Spoof id
@@ -35,10 +39,17 @@
 %% Long.MAX_VALUE = 9223372036854775807 = 2^63-1
 -define(MAX_LONG, (1 bsl 63 - 1)).
 
+%% @pure
+my_contact(ExternalIP, ListenPort) ->
+    ProtoVer = proto_version_num(supported),
+    contact(ProtoVer, ExternalIP, ListenPort).
+
+%% @pure
 -spec contact(proto_version(), address()) -> contact().
 contact(ProtoVer, {IP, Port}) ->
     contact(ProtoVer, IP, Port).
 
+%% @pure
 -spec contact(proto_version(), ipaddr(), portnum()) ->
     contact().
 contact(ProtoVer, IP, Port) ->
@@ -47,6 +58,7 @@ contact(ProtoVer, IP, Port) ->
              node_id=node_id(ProtoVer, IP, Port)}.
 
 %% Create a contact from the compact form.
+%% @pure
 contact({ProtoVer, IP, Port}) ->
     contact(ProtoVer, IP, Port).
 
@@ -54,6 +66,7 @@ contacts(Constants) ->
     [contact(Constant) || Constant <- Constants].
 
 %% Make contacts easy to print and read.
+%% @pure
 compact_contacts(Contacts) ->
     [compact_contact(Contact) || Contact <- Contacts].
 compact_contact(#contact{version=ProtoVer, address={IP, Port}}) ->
@@ -62,15 +75,18 @@ compact_contact(#contact{version=ProtoVer, address={IP, Port}}) ->
 %% Node ID calculation
 %% ===================
 
+%% @pure
 -spec node_id(contact()) -> node_id().
 node_id(#contact{node_id=NodeId}) ->
     NodeId.
 
 %% See DHTUDPUtils.getNodeID(InetSocketAddress, byte) in vuze.
+%% @pure
 -spec node_id(proto_version(), ipaddr(), portnum()) -> node_id().
 node_id(ProtoVer, IP, Port) ->
     crypto:sha(node_id_key(ProtoVer, IP, Port)).
 
+%% @pure
 -spec node_id_key(proto_version(), ipaddr(), portnum()) -> iolist().
 node_id_key(Version, IP, Port) ->
     case {version_to_key_type(Version), ip_version(IP)} of
@@ -82,6 +98,7 @@ node_id_key(Version, IP, Port) ->
         {none,            _} -> simple_key({IP, Port})
     end.
 
+%% @pure
 version_to_key_type(Version) ->
     case higher_or_equal_version(Version, restrict_id3) of
         true -> uow;
@@ -99,6 +116,7 @@ version_to_key_type(Version) ->
 
 %% restrictions suggested by UoW researchers as effective at reducing Sybil opportunity but 
 %% not so restrictive as to impact DHT performance
+%% @pure
 uow_key({{A,B,C,D}, Port}) ->
     K0 = ?MAX_LONG,
     K1 = ?MAX_LONG,
@@ -118,6 +136,7 @@ uow_key({{A,B,C,D}, Port}) ->
     integer_to_list(R4).
     
 
+%% @pure
 restrict_ports2_key({IP, Port}) ->
     %% more draconian limit, analysis shows that of 500,000 node addresses only
     %% 0.01% had >= 8 ports active. ( 1% had 2 ports, 0.1% 3)
@@ -126,20 +145,24 @@ restrict_ports2_key({IP, Port}) ->
     %% ia.getHostAddress() + ":" + ( address.getPort() % 8 );
     [print_ip(IP), $:, $0 + (Port rem 8)].
 
+%% @pure
 restrict_ports_key({IP, Port}) ->
     %% limit range to around 2000 (1999 is prime)
     %% ia.getHostAddress() + ":" + ( address.getPort() % 1999 );
     io_lib:format("~s:~B", [print_ip(IP), Port rem 1999]).
 
+%% @pure
 simple_key({IP, Port}) ->
     io_lib:format("~s:~B", [print_ip(IP), Port]).
 
+%% @pure
 ip_version(IP) ->
     case tuple_size(IP) of
         4 -> ipv4;
         8 -> ipv6
     end.
 
+%% @pure
 print_ip({A,B,C,D}) ->
     io_lib:format("~B.~B.~B.~B", [A,B,C,D]);
 print_ip({_,_,_,_, _,_,_,_}=IP) ->
@@ -147,34 +170,71 @@ print_ip({_,_,_,_, _,_,_,_}=IP) ->
     io_lib:format("~4.16.0B:~4.16.0B:~4.16.0B:~4.16.0B:"
                   "~4.16.0B:~4.16.0B:~4.16.0B:~4.16.0B", tuple_to_list(IP)).
 
+%% @impure
+furthest_contact(Contact) ->
+    ID = node_id(Contact),
+    CFactor = ?K * 2,
+    %% Get alive nodes.
+    Closest = azdht_router:closest_to(ID, CFactor),
+    lists:last(Closest).
+
+
+%% @pure
+-spec closest_to(node_id(), list(contact()), non_neg_integer()) ->
+    list(nodeinfo()).
+closest_to(ID, Contacts, NumContacts) ->
+    WithDist = [{compute_distance(node_id(Contact), ID), Contact}
+               || Contact <- Contacts],
+    Sorted = lists:keysort(1, WithDist),
+    Limited = lists:sublist(Sorted, NumContacts),
+    [Contact || {_, Contact} <- Limited].
+
+%% see DHTUDPUtils.isIDInClosestContacts
+is_id_in_closest_contacts(TestID, TargetID, NumToConsider) ->
+    Closest = azdht_router:closest_to(TargetID, NumToConsider),
+    ClosestNodeIDs = [node_id(Contact) || Contact <- Closest],
+    case lists:member(TestID, ClosestNodeIDs) of
+        false -> false;
+        true -> is_id_in_closest_contacts_1(ClosestNodeIDs, TestID,
+                                            TargetID, NumToConsider, 0)
+    end.
+
+is_id_in_closest_contacts_1([NodeID|ClosestNodeIDs],
+                            TestID, TargetID,
+                            NumToConsider, NumCloser)
+    when NumCloser < NumToConsider ->
+    Diff = compute_and_compare_distances(NodeID, TestID, TargetID),
+    IsCloser = case Diff < 0 of true -> 1; false -> 0 end,
+    is_id_in_closest_contacts_1(ClosestNodeIDs,
+                                TestID, TargetID,
+                                NumToConsider, NumCloser + IsCloser);
+is_id_in_closest_contacts_1([], _, _, _, _) -> true;
+%% Enough nodes are closer.
+is_id_in_closest_contacts_1(_, _, _, _, _) -> false.
+        
+
+
 %% Spoof ID
 %% ========
 
-furthest_contact(MyContact) ->
-    MyID = node_id(MyContact),
-    CFactor = ?K * 2,
-    %% Get alive nodes.
-    Closest = azdht_router:closest_to(MyID, CFactor, true),
-    lists:last(Closest).
-
 %% For main network (not CVS).
 %% see control/impl/DHTControlImpl.java:generateSpoofID(originator_contact)
-spoof_id(#contact{}=Contact, MyContact, FurthestContact, Key) ->
+spoof_id(#contact{}=Contact, MyContact, FurthestContact, SecretKey) ->
     FurthestID = node_id(FurthestContact),
     OriginatorID = node_id(Contact),
     MyID = node_id(MyContact),
     %% make sure the originator is in our group
     Diff = compute_and_compare_distances(FurthestID, OriginatorID, MyID),
     if Diff < 0 -> 0;
-       true -> generate_spoof_id(Contact, Key)
+       true -> generate_spoof_id(Contact, SecretKey)
     end.
 
-generate_spoof_id(#contact{address={IP,_Port}}, Key) ->
+generate_spoof_id(#contact{address={IP,_Port}}, SecretKey) ->
     Text = case IP of
                {A,B,C,D}          -> <<A,B,C,D,4,4,4,4>>;
                {A,B,C,D, _,_,_,_} -> <<A:16,B:16,C:16,D:16>>
            end,
-    <<SpoofId:32/big, _/binary>> = crypto:des_ecb_encrypt(Key, Text),
+    <<SpoofId:32/big, _/binary>> = crypto:des_ecb_encrypt(SecretKey, Text),
     SpoofId.
  
  
@@ -192,6 +252,9 @@ compute_and_compare_distances(<<H1,T1/binary>>,
         Diff -> Diff
     end;
 compute_and_compare_distances(<<>>, <<>>, <<>>) -> 0.
+
+compute_distance(<<ID1:160>>, <<ID2:160>>) ->
+    <<(ID1 bxor ID2):160>>.
 
 
 %% Constants

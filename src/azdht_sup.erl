@@ -39,14 +39,18 @@ start_link(ListenIP, ListenPort, ExternalIP, StateFile) ->
 
 %% @private
 init([ListenIP, ListenPort, ExternalIP, StateFile]) ->
+    MyContact = azdht:my_contact(ExternalIP, ListenPort),
     Net = {azdht_net,
            {azdht_net, start_link, [ListenIP, ListenPort, ExternalIP]},
             permanent, 5000, worker, [azdht_net]},
     Router = {azdht_router,
-           {azdht_router, start_link, [StateFile]},
+           {azdht_router, start_link, [MyContact, StateFile]},
             permanent, 5000, worker, [azdht_router]},
+    DB = {azdht_db,
+           {azdht_db, start_link, []},
+            permanent, 5000, worker, [azdht_db]},
 
-    {ok, {{one_for_all, 3, 60}, [Net, Router]}}.
+    {ok, {{one_for_all, 3, 60}, [Net, Router, DB]}}.
 
 
 %% ====================================================================

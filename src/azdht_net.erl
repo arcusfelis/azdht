@@ -302,12 +302,24 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
     Action = action_request_name(RequestActionNum),
     {RequestBody, _} = decode_request_body(Action, Version, Body),
     lager:debug("Decoded body: ~ts~n", [pretty(RequestBody)]),
+    SenderContact = azdht:contact(Version, Address),
     Result = 
     case Action of
         ping ->
             NetworkCoordinates = [#position{type=none}],
             Args = #ping_reply{network_coordinates=NetworkCoordinates},
             {ok, Args};
+        store ->
+            #store_request{
+                spoof_id=SpoofId,
+                keys=Keys,
+                value_groups=ValueGroups} = RequestBody,
+            case azdht_db:store_request(SpoofId, SenderContact,
+                                        Keys, ValueGroups) of
+                {ok, Divs} -> ok;
+                {error, _Reason} -> ok
+            end,
+            {error, unknown_action};
         _ ->
             {error, unknown_action}
     end,
