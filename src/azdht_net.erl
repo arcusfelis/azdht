@@ -17,7 +17,8 @@
          ping/1,
          find_node/2,
          find_value/2,
-         store/4]).
+         store/4,
+         announce/4]).
 
 %% Needs a router.
 -export([find_node/1,
@@ -146,6 +147,21 @@ store(Contact, SpoofID, Keys, ValueGroups) ->
         timeout -> {error, timeout};
         Values -> decode_reply_body(store, Values)
     end.
+
+announce(Contact, SpoofID, Key, MyPortBT) ->
+    {MegaSecs, Secs, MicroSecs} = now(),
+    Secs2 = MegaSecs * 1000000 + Secs,
+    MicroSecs2 = Secs2 * 1000000 + MicroSecs,
+    Value = #transport_value{
+        version = Secs2,
+        created = MicroSecs2,
+        value = list_to_binary(integer_to_list(MyPortBT)),
+        flags = 0,
+        life_hours = 0,
+        replication_control = 0,
+        originator = my_contact()
+    },
+    store(Contact, SpoofID, [Key], [[Value]]).
 
 
 %% ==================================================================
@@ -711,13 +727,13 @@ encode_reply_header(#reply_header{
     ].
 
 %% see DHTUDPUtils.deserialiseTransportValues
-encode_value_group(Values, Version) ->
+encode_value_group(Values, Version) when is_list(Values) ->
     ValueCount = length(Values),
     [encode_short(ValueCount),
      [encode_value(Rec, Version) || Rec <- Values]].
 
 %% see DHTUDPUtils.deserialiseTransportValuesArray
-encode_value_groups(ValueGroups, Version) ->
+encode_value_groups(ValueGroups, Version) when is_list(ValueGroups) ->
     ValueGroupCount = length(ValueGroups),
     %% MAX_KEYS_PER_PACKET = 255
     [encode_byte(ValueGroupCount),
@@ -741,7 +757,7 @@ encode_value(ValueRec=#transport_value{}, PacketVersion) ->
     end,
     encode_long(Created),
     encode_sized_binary2(Value),
-    decode_contact(Originator),
+    encode_contact(Originator),
     encode_byte(Flags),
     case higher_or_equal_version(PacketVersion, longer_life) of
         true  -> encode_byte(LifeHours);
@@ -850,7 +866,7 @@ encode_reply_body(find_value, Version, #find_value_reply{
     end
     ];
 encode_reply_body(store, _Version, #store_reply{diversifications=Divs}) ->
-    encode_sized_bytes(Divs).
+    encode_sized_bytes([diversification_type_num(Div) || Div <- Divs]).
 
 
 decode_request_body(ping, Version, Bin) ->
@@ -992,7 +1008,7 @@ decode_reply_body(ping, Version, Bin) ->
 decode_reply_body(store, _Version, Bin) ->
     {Divs, Bin1} = decode_sized_bytes(Bin),
     Reply = #store_reply{
-            diversifications=Divs
+            diversifications=[diversification_type(X) || X <- Divs]
             },
     {Reply, Bin1}.
 

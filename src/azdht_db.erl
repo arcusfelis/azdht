@@ -56,9 +56,8 @@ total_size() ->
 
 store_request(SpoofId, SenderContact, Keys, ValueGroups) ->
     MyContact = azdht_net:my_contact(),
-    FurthestContact = azdht:furthest_contact(MyContact),
-    SpoofId1 = azdht:spoof_id(SenderContact, MyContact,
-                              FurthestContact, secret_key()), 
+    SpoofId1 = azdht:spoof_id(SenderContact), 
+    lager:debug("SpoofId ~p, SpoofId1 ~p.", [SpoofId, SpoofId1]),
     CFactor = ?K,
     MyNodeId = node_id(MyContact),
     IsCorrect = SpoofId =:= SpoofId1 andalso
@@ -88,22 +87,22 @@ store_request(SpoofId, SenderContact, Keys, ValueGroups) ->
 
 store_request_1(Key, NewValues) ->
     OldValues = ets:lookup_element(table(), Key, 2),
-    lists:foldl(
-        fun
-        ({NV, undefined}, TotalSize) ->
-            case TotalSize > max_total_size() of
-                true  -> {frequency, TotalSize}; %% TODO: not sure
-                false -> insert_value(Key, NV), {none, TotalSize+1}
-            end;
-            
-        ({NV, OV}, TotalSize) ->
-            ets:delete_object(table(), OV),
-            insert_value(Key, NV),
-            {none, TotalSize}
-        end,
-        total_size(),
-        sort_and_left_join(#transport_value.originator,
-                           NewValues, OldValues)).
+    case total_size() > max_total_size() of
+        true -> size;
+        false ->
+            lists:foreach(
+                fun
+                ({NV, undefined}) ->
+                    insert_value(Key, NV);
+                    
+                ({NV, OV}) ->
+                    ets:delete_object(table(), OV),
+                    insert_value(Key, NV)
+                end,
+                sort_and_left_join(#transport_value.originator,
+                                   NewValues, OldValues)),
+            none
+    end.
 
 %% All members from L1.
 sort_and_left_join(N, L1, L2) ->

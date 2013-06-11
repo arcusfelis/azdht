@@ -18,6 +18,7 @@
          action_request_num/1,
          action_reply_num/1,
          diversification_type/1,
+         diversification_type_num/1,
          random_key/0,
          encode_key/1,
          closest_to/3,
@@ -224,10 +225,10 @@ is_id_in_closest_contacts_1(_, _, _, _, _) -> false.
 %% @impure
 spoof_id(SenderContact) ->
     MyContact = azdht_net:my_contact(),
+    SecretKey = azdht_db:secret_key(),
     case azdht:furthest_contact(MyContact) of
-        undefined -> 0;
+        undefined -> generate_spoof_id(SenderContact, SecretKey);
         FurthestContact ->
-            SecretKey = azdht_db:secret_key(),
             spoof_id(SenderContact, MyContact, FurthestContact,
                      SecretKey)
     end.
@@ -323,6 +324,7 @@ proto_version_num(VersionName) ->
 action_request_num(ActionName) when is_atom(ActionName) ->
     case ActionName of
         ping       -> 1024;
+        store      -> 1026;
         find_node  -> 1028;
         find_value -> 1030;
         _          -> undefined
@@ -331,6 +333,7 @@ action_request_num(ActionName) when is_atom(ActionName) ->
 action_reply_num(ActionName) when is_atom(ActionName) ->
     case ActionName of
         ping       -> 1025;
+        store      -> 1027;
         find_node  -> 1029;
         find_value -> 1031;
         _          -> undefined
@@ -340,6 +343,8 @@ action_name(ActionNum) when is_integer(ActionNum) ->
     case ActionNum of
         1024 -> ping;
         1025 -> ping;
+        1026 -> store;
+        1027 -> store;
         1028 -> find_node;
         1029 -> find_node;
         1030 -> find_value;
@@ -351,6 +356,7 @@ action_name(ActionNum) when is_integer(ActionNum) ->
 action_reply_name(ActionNum) when is_integer(ActionNum) ->
     case ActionNum of
         1025 -> ping;
+        1027 -> store;
         1029 -> find_node;
         1031 -> find_value;
         1032 -> error; %% Special care
@@ -360,6 +366,7 @@ action_reply_name(ActionNum) when is_integer(ActionNum) ->
 action_request_name(ActionNum) when is_integer(ActionNum) ->
     case ActionNum of
         1024 -> ping;
+        1026 -> store;
         1028 -> find_node;
         1030 -> find_value;
         _    -> undefined

@@ -18,7 +18,9 @@
          find_node/0,
          find_node/1,
          find_node2/0,
-         find_node2/1]).
+         find_node2/1,
+         announce/0,
+         announce/1]).
 
 
 suite() ->
@@ -84,6 +86,15 @@ init_per_testcase(find_node2, Config) ->
     start_app(Node1, Node1Conf),
     start_app(Node2, Node2Conf),
     start_app(Node3, Node3Conf),
+    Config;
+
+init_per_testcase(announce, Config) ->
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Node1Conf = node1_configuration(Node1),
+    Node2Conf = node2_configuration(Node2),
+    start_app(Node1, Node1Conf),
+    start_app(Node2, Node2Conf),
     Config.
 
 
@@ -108,6 +119,13 @@ end_per_testcase(find_node2, Config) ->
     stop_app(Node1),
     stop_app(Node2),
     stop_app(Node3),
+    ok;
+
+end_per_testcase(announce, Config) ->
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    stop_app(Node1),
+    stop_app(Node2),
     ok.
 
 %% Configuration
@@ -135,7 +153,7 @@ node3_configuration(_) ->
 %% Tests
 %% ----------------------------------------------------------------------
 groups() ->
-    Tests = [ping, find_node, find_node2],
+    Tests = [ping, find_node, find_node2, announce],
 %   [{main_group, [shuffle], Tests}].
     [{main_group, [], Tests}].
 
@@ -182,7 +200,7 @@ find_node2(Config) ->
     io:format("~n======START FIND NODE WITH A MIDDLEMAN TEST CASE======~n", []),
     Node1 = ?config(node1, Config),
     Node2 = ?config(node2, Config),
-    Node3 = ?config(node2, Config),
+    Node3 = ?config(node3, Config),
     Contact1 = azdht_node:my_contact(Node1),
     Contact2 = azdht_node:my_contact(Node2),
     Contact3 = azdht_node:my_contact(Node3),
@@ -193,7 +211,28 @@ find_node2(Config) ->
     FindNodeResult = azdht_node:find_node(Node1, Contact3, azdht:node_id(Contact2)),
     ct:pal("FindNodeResult ~p", [FindNodeResult]),
     case FindNodeResult of
-        {ok, #find_node_reply{contacts=[Contact1]}} -> ok
+        {ok, #find_node_reply{contacts=[Contact2, Contact1]}} -> ok
+    end.
+
+
+announce() ->
+    [{require, common_conf, azdht_common_config}].
+
+announce(Config) ->
+    io:format("~n======START ANNOUNCE TEST CASE======~n", []),
+    Node1 = ?config(node1, Config),
+    Node2 = ?config(node2, Config),
+    Contact1 = azdht_node:my_contact(Node1),
+    Contact2 = azdht_node:my_contact(Node2),
+    EncodedKey = azdht:node_id(Contact1),
+    %% Request Node2 from Node1 to find a key.
+    FindNodeResult = azdht_node:find_node(Node1, Contact2, EncodedKey),
+    ct:pal("FindNodeResult ~p", [FindNodeResult]),
+    {ok, #find_node_reply{spoof_id=SpoofID}} = FindNodeResult,
+    AnnResult = azdht_node:announce(Node1, Contact2, SpoofID, EncodedKey, 50365),
+    ct:pal("AnnResult ~p", [AnnResult]),
+    case AnnResult of
+        {ok, #store_reply{diversifications=[none]}} -> ok
     end.
 
 
