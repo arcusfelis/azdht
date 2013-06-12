@@ -196,7 +196,8 @@ closest_to(ID, Contacts, NumContacts) ->
 
 %% see DHTUDPUtils.isIDInClosestContacts
 is_id_in_closest_contacts(TestID, TargetID, NumToConsider) ->
-    Closest = azdht_router:closest_to(TargetID, NumToConsider),
+    %% The local node is included in this list.
+    Closest = azdht_router:closest_to(TargetID, NumToConsider, true),
     ClosestNodeIDs = [node_id(Contact) || Contact <- Closest],
     case lists:member(TestID, ClosestNodeIDs) of
         false -> false;

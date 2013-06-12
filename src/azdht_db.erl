@@ -4,6 +4,7 @@
 % Public interface
 -export([start_link/0,
          find_value/1,
+         find_value/2,
          store_request/4,
          secret_key/0]).
 
@@ -42,7 +43,19 @@ secret_key() ->
     EncodedKey :: key(),
     Values :: value_group().
 find_value(EncodedKey) ->
-    ets:lookup_element(table(), EncodedKey, 2).
+    try ets:lookup_element(table(), EncodedKey, 2)
+    catch error:badarg -> []
+    end.
+
+-spec find_value(EncodedKey, MaxValues) ->  Values when
+    EncodedKey :: key(),
+    MaxValues :: non_neg_integer(),
+    Values :: value_group().
+find_value(EncodedKey, 0) ->
+    %% MaxValues = 0 -> return all
+    find_value(EncodedKey);
+find_value(EncodedKey, MaxValues) when is_integer(MaxValues) ->
+    lists:sublist(find_value(EncodedKey), MaxValues).
 
 -spec insert_value(EncodedKey, Value) -> ok when
     EncodedKey :: key(),
@@ -51,8 +64,9 @@ insert_value(EncodedKey, Value) ->
     ets:insert(table(), {EncodedKey, Value}).
 
 total_size() ->
-    ets:info(table(), size).
-
+    Size = ets:info(table(), size),
+    [error(table_not_ready) || Size == undefined],
+    Size.
 
 store_request(SpoofId, SenderContact, Keys, ValueGroups) ->
     MyContact = azdht_net:my_contact(),
@@ -73,29 +87,32 @@ store_request(SpoofId, SenderContact, Keys, ValueGroups) ->
         true ->
             Divs =
             [case azdht:is_id_in_closest_contacts(MyNodeId,
-                                                  K, CFactor) of
+                                                  Key, CFactor) of
                 true ->
-                    store_request_1(K, Vs);
+                    store_request_1(Key, Vs);
                 false ->
+                    lager:debug("Key ~p is too far away.", [Key]),
                     none
              end
-            || {K,Vs} <- lists:zip(Keys, ValueGroups)],
+            || {Key,Vs} <- lists:zip(Keys, ValueGroups)],
             {ok, Divs};
         false ->
             {error, bad_originator}
     end.
 
 store_request_1(Key, NewValues) ->
-    OldValues = ets:lookup_element(table(), Key, 2),
+    OldValues = find_value(Key),
     case total_size() > max_total_size() of
         true -> size;
         false ->
             lists:foreach(
                 fun
                 ({NV, undefined}) ->
+                    lager:debug("Insert entry ~p = ~p.", [Key, NV]),
                     insert_value(Key, NV);
                     
                 ({NV, OV}) ->
+                    lager:debug("Replace entry ~p = ~p.", [Key, NV]),
                     ets:delete_object(table(), OV),
                     insert_value(Key, NV)
                 end,
@@ -116,7 +133,11 @@ ordered_left_join(N, [H1|T1], [H2|T2]) ->
     if E1 =:= E2 -> [{H1,H2}|ordered_left_join(N, T1, T2)];
        E1  <  E2 -> [{H1,undefined}|ordered_left_join(N, T1, [H2|T2])];
        true      -> ordered_left_join(N, [H1|T1], T2)
-    end.
+    end;
+ordered_left_join(_, [], _) ->
+    [];
+ordered_left_join(_, L1, _) ->
+    [{X,undefined} || X <- L1].
 
 is_cache_forwarding(SenderContact, ValueGroups) ->
     %% If originator != sender, than it is cache forwarding.
@@ -148,7 +169,7 @@ start_link() ->
 %% ==================================================================
 
 init([]) ->
-    ets:new(table(), [bag]),
+    ets:new(table(), [bag, public, named_table]),
     timer:send_interval(timer:seconds(60), clean_timeout),
     State = #state{
         secret_key=azdht:generate_spoof_key()

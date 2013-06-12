@@ -53,6 +53,7 @@
          is_interesting/1,
          closest_to/1,
          closest_to/2,
+         closest_to/3,
          log_request_timeout/1,
          log_request_success/1,
          log_request_from/1,
@@ -71,7 +72,8 @@
          code_change/3]).
 
 -record(state, {
-    node_id :: nodeid(),
+    my_contact :: contact(),
+    node_id :: nodeid(), % My node ID
     buckets=b_new(), % The actual routing table
     node_timers=timer_tree(), % Node activity times and timeout references
     buck_timers=timer_tree(),% Bucker activity times and timeout references
@@ -168,7 +170,12 @@ closest_to(NodeID) ->
 
 -spec closest_to(nodeid(), pos_integer()) -> list(contact()).
 closest_to(NodeID, NumNodes) ->
-    gen_server:call(srv_name(), {closest_to, NodeID, NumNodes}).
+    closest_to(NodeID, NumNodes, false).
+
+-spec closest_to(nodeid(), pos_integer(), boolean()) -> list(contact()).
+closest_to(NodeID, NumNodes, WithMe)
+    when is_boolean(WithMe), is_integer(NumNodes) ->
+    gen_server:call(srv_name(), {closest_to, NodeID, NumNodes, WithMe}).
 
 -spec log_request_timeout(contact()) -> 'ok'.
 log_request_timeout(Contact) ->
@@ -333,6 +340,7 @@ init([MyContact, StateFile]) ->
     end, InitBTimers, b_ranges(Buckets)),
 
     State = #state{
+        my_contact=MyContact,
         node_id=MyNodeID,
         buck_timers=BTimers,
         state_file=StateFile},
@@ -451,14 +459,16 @@ handle_call({insert_node, Contact}, _From, State) ->
 
 
 
-handle_call({closest_to, ID, NumNodes}, _, State) ->
+handle_call({closest_to, ID, NumNodes, WithMe}, _, State) ->
     #state{
         buckets=Buckets,
         node_timers=NTimers,
-        node_timeout=NTimeout} = State,
+        node_timeout=NTimeout,
+        my_contact=MyContact} = State,
     AllNodes   = b_node_list(Buckets),
     Active     = active_nodes(AllNodes, NTimeout, NTimers),
-    CloseNodes = azdht:closest_to(ID, Active, NumNodes),
+    Contacts   = [MyContact || WithMe] ++ Active,
+    CloseNodes = azdht:closest_to(ID, Contacts, NumNodes),
     {reply, CloseNodes, State};
 
 

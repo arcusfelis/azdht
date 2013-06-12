@@ -233,7 +233,17 @@ announce(Config) ->
     ct:pal("AnnResult ~p", [AnnResult]),
     case AnnResult of
         {ok, #store_reply{diversifications=[none]}} -> ok
-    end.
+    end,
+    FindValueResult = azdht_node:find_value(Node1, Contact2, EncodedKey),
+    ct:pal("FindValueResult ~p", [FindValueResult]),
+    case FindValueResult of
+        {ok, #find_value_reply{values = [
+                            #transport_value{
+                                originator=Contact1,
+                                value = <<"50365">>}]}} -> ok
+    end,
+
+    ok.
 
 
 

@@ -148,9 +148,6 @@
     has_continuation :: boolean(), 
     %% Indicates whether this packet carries values or contacts.
     has_values  :: boolean(),
-    %% Number of stored contacts.
-    %% has_values == false
-    contacts_count :: short(),
     %% Stored contacts that are close to the searched key.
     %% has_values == false
     contacts :: contacts(),

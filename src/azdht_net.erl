@@ -332,6 +332,30 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
                 network_coordinates=NetworkCoordinates,
                 contacts=Contacts},
             {ok, Args};
+        find_value ->
+            #find_value_request{
+                id=EncodedKey,
+                max_values=MaxValues} = RequestBody,
+            case azdht_db:find_value(EncodedKey, MaxValues) of
+                [] ->
+                    Contacts = azdht_router:closest_to(EncodedKey),
+                    NetworkCoordinates = [#position{type=none}],
+                    Args = #find_value_reply{
+                            has_continuation = false, % TODO div_and_cont
+                            has_values=false,
+                            network_coordinates=NetworkCoordinates,
+                            contacts=Contacts
+                            },
+                    {ok, Args};
+                Values ->
+                    Args = #find_value_reply{
+                            has_continuation = false, % TODO div_and_cont
+                            has_values=true,
+                            diversification_type=none,
+                            values = Values
+                            },
+                    {ok, Args}
+            end;
         _ ->
             {error, unknown_action}
     end,
@@ -844,7 +868,7 @@ encode_reply_body(find_value, Version, #find_value_reply{
         true -> encode_boolean(HasContinuation);
         flase -> encode_none()
     end,
-    decode_boolean(HasValues),
+    encode_boolean(HasValues),
     case HasValues of
         true ->
             %% Encode values.
@@ -887,6 +911,16 @@ decode_request_body(find_node, Version, Bin) ->
         id=ID,
         node_status=NodeStatus,
         dht_size=DhtSize
+    },
+    {Request, Bin3};
+decode_request_body(find_value, _Version, Bin) ->
+    {ID,        Bin1} = decode_sized_binary(Bin),
+    {Flags,     Bin2} = decode_byte(Bin1),
+    {MaxValues, Bin3} = decode_byte(Bin2),
+    Request = #find_value_request{
+        id=ID,
+        flags=Flags,
+        max_values=MaxValues
     },
     {Request, Bin3};
 decode_request_body(store, Version, Bin) ->
