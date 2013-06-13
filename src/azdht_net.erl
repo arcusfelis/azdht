@@ -320,6 +320,7 @@ handle_cast({forward_reply, {IP, Port}, EncodedReply}, State) ->
 handle_cast(not_implemented, State) ->
     {noreply, State}.
 
+
 handle_info({timeout, _, IP, Port, ID}, State) ->
     #state{sent=Sent} = State,
 
@@ -1495,4 +1496,5 @@ has_continuation(find_value, <<1, _/binary>>) ->
     true;
 has_continuation(_, _) ->
     false.
+
 

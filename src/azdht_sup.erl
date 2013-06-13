@@ -25,7 +25,7 @@
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     ListenPort = get_required_app_env(listen_port),
-    ExternalIP = get_required_app_env(external_ip),
+    ExternalIP = get_app_env(external_ip),
     ListenIP   = get_app_env(listen_ip, all),
     StateFile  = get_app_env(state_filename),
     start_link(ListenIP, ListenPort, ExternalIP, StateFile).
@@ -39,9 +39,18 @@ start_link(ListenIP, ListenPort, ExternalIP, StateFile) ->
 
 %% @private
 init([ListenIP, ListenPort, ExternalIP, StateFile]) ->
-    MyContact = azdht:my_contact(ExternalIP, ListenPort),
+    ExternalIP1 = 
+    case ExternalIP of
+        undefined ->
+            case ext_ip:detect_external_ip() of
+                {ok, IP} -> IP;
+                {error, _} -> error(cannot_detect_ext_ip)
+            end;
+        _ -> ExternalIP
+    end,
+    MyContact = azdht:my_contact(ExternalIP1, ListenPort),
     Net = {azdht_net,
-           {azdht_net, start_link, [ListenIP, ListenPort, ExternalIP]},
+           {azdht_net, start_link, [ListenIP, ListenPort, ExternalIP1]},
             permanent, 5000, worker, [azdht_net]},
     Router = {azdht_router,
            {azdht_router, start_link, [MyContact, StateFile]},
