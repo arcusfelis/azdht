@@ -13,6 +13,7 @@
          lower_version/2,
          proto_version_num/1,
          action_name/1,
+         error_type/1,
          action_reply_name/1,
          action_request_name/1,
          action_request_num/1,
@@ -376,6 +377,9 @@ action_request_name(ActionNum) when is_integer(ActionNum) ->
 diversification_type(1) -> none;
 diversification_type(2) -> frequency;
 diversification_type(3) -> size.
+
+error_type(1) -> wrong_address;
+error_type(2) -> key_blocked.
 
 diversification_type_num(none)      -> 1;
 diversification_type_num(frequency) -> 2;

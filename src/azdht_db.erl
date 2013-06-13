@@ -139,6 +139,15 @@ ordered_left_join(_, [], _) ->
 ordered_left_join(_, L1, _) ->
     [{X,undefined} || X <- L1].
 
+
+-ifdef(TEST).
+sort_and_left_join_test_() ->
+    [?_assertEqual(sort_and_left_join(2, [{a,1},{b,2}], [{x,3},{y,2}]),
+                   [{{a,1},undefined},{{b,2},{y,2}}])
+    ].
+-endif.
+
+
 is_cache_forwarding(SenderContact, ValueGroups) ->
     %% If originator != sender, than it is cache forwarding.
     SenderNodeId = node_id(SenderContact),

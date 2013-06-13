@@ -44,6 +44,35 @@
 -define(MAX_UINT, 16#FFFFFFFF).
 
 -include_lib("azdht/include/azdht.hrl").
+-define(DHT_REPLY_HEADER_SIZE,
+       (8 %% PRUDPPacketReply.PR_HEADER_SIZE
+       +8 %% con id
+       +1 %% ver
+       +1 %% net 
+       +4 %% instance
+       +1 %% flags
+       )).
+
+-define(DHT_FIND_VALUE_HEADER_SIZE,
+        (?DHT_REPLY_HEADER_SIZE + 1 + 1 + 2)).
+
+-define(INETSOCKETADDRESS_IPV4_SIZE, 7).
+    
+-define(DHTTRANSPORTCONTACT_SIZE,
+        (2 + ?INETSOCKETADDRESS_IPV4_SIZE)).
+        
+% DHTUDPUtils.DHTTRANSPORTVALUE_SIZE_WITHOUT_VALUE;
+-define(DHTTRANSPORTVALUE_SIZE_WITHOUT_VALUE,
+        (17 + ?DHTTRANSPORTCONTACT_SIZE)).
+
+-define(DHT_FIND_VALUE_TV_HEADER_SIZE,
+        ?DHTTRANSPORTVALUE_SIZE_WITHOUT_VALUE).
+
+% DHTUDPPacketHelper.PACKET_MAX_BYTES
+-define(PACKET_MAX_BYTES, 1400).
+
+-define(MAX_SIZE_FIND_VALUE_REPLY,
+        (?PACKET_MAX_BYTES - ?DHT_FIND_VALUE_HEADER_SIZE)).
 
 % gen_server callbacks
 -export([init/1,
@@ -81,7 +110,6 @@ query_timeout() ->
 socket_options(ListenIP) ->
     [list, inet, {active, true}, {mode, binary}]
     ++ case ListenIP of all -> []; ListenIP -> [{ip, ListenIP}] end.
-
 
 %
 % Public interface
@@ -130,10 +158,35 @@ find_node(Contact, Target)  ->
 find_value(Contact, EncodedKey) ->
     case gen_server:call(srv_name(), {find_value, Contact, EncodedKey}) of
         timeout ->
+            receive_packets(),
             {error, timeout};
         Values  ->
-            decode_reply_body(find_value, Values)
+            self() ! {packet_body, Values},
+            Replies = [decode_reply_body(find_value, Values1)
+                       || Values1 <- receive_packets()],
+            case lists:any(fun is_error/1, Replies) of
+                true  ->
+                    {error, Replies};
+                false ->
+                    {ok, merge_find_value_bodies([X || {ok, X} <- Replies])}
+            end
     end.
+
+receive_packets() ->
+    receive
+        {packet_body, Values} -> [Values|receive_packets()]
+    after 0 -> []
+    end.
+
+is_error({error, _}) -> true;
+is_error({ok, _})    -> false.
+
+
+merge_find_value_bodies([#find_value_reply{values=V1, has_continuation=true},
+                      H2=#find_value_reply{values=V2}|T]) ->
+    merge_find_value_bodies([H2#find_value_reply{values=V1 ++ V2}|T]);
+merge_find_value_bodies([H=#find_value_reply{has_continuation=false}]) ->
+    H.
 
 
 %
@@ -309,7 +362,7 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
         ping ->
             NetworkCoordinates = [#position{type=none}],
             Args = #ping_reply{network_coordinates=NetworkCoordinates},
-            {ok, Args};
+            {ok, [Args]};
         store ->
             #store_request{
                 spoof_id=SpoofId,
@@ -317,7 +370,9 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
                 value_groups=ValueGroups} = RequestBody,
             case azdht_db:store_request(SpoofId, SenderContact,
                                         Keys, ValueGroups) of
-                {ok, Divs} -> {ok, #store_reply{diversifications=Divs}};
+                {ok, Divs} ->
+                    Args = #store_reply{diversifications=Divs},
+                    {ok, [Args]};
                 {error, _Reason} -> {error, _Reason}
             end;
         find_node ->
@@ -331,36 +386,14 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
                 dht_size=0,
                 network_coordinates=NetworkCoordinates,
                 contacts=Contacts},
-            {ok, Args};
+            {ok, [Args]};
         find_value ->
-            #find_value_request{
-                id=EncodedKey,
-                max_values=MaxValues} = RequestBody,
-            case azdht_db:find_value(EncodedKey, MaxValues) of
-                [] ->
-                    Contacts = azdht_router:closest_to(EncodedKey),
-                    NetworkCoordinates = [#position{type=none}],
-                    Args = #find_value_reply{
-                            has_continuation = false, % TODO div_and_cont
-                            has_values=false,
-                            network_coordinates=NetworkCoordinates,
-                            contacts=Contacts
-                            },
-                    {ok, Args};
-                Values ->
-                    Args = #find_value_reply{
-                            has_continuation = false, % TODO div_and_cont
-                            has_values=true,
-                            diversification_type=none,
-                            values = Values
-                            },
-                    {ok, Args}
-            end;
+            handle_find_value_request_packet(RequestBody, Version);
         _ ->
             {error, unknown_action}
     end,
     case Result of
-        {ok, ReplyArgs} ->
+        {ok, ReplyArgsList} ->
         ReplyActionNum = action_reply_num(Action),
         PacketVersion = min(proto_version_num(supported), Version),
         ReplyHeader = #reply_header{
@@ -371,14 +404,47 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
             vendor_id=0,
             network_id=0,
             instance_id=MyInstanceId},
-        Reply = [encode_reply_header(ReplyHeader)
-                |encode_reply_body(Action, PacketVersion, ReplyArgs)],
-        forward_reply(SocketPid, Address, Reply),
+        %% One header for all outgoing packets
+        EncodedReplyHeader = encode_reply_header(ReplyHeader),
+        %% For each reply packet...
+        [begin
+            EncodedReplyBody = encode_reply_body(Action,
+                                                 PacketVersion,
+                                                 ReplyArgs),
+            ReplyPacket = [EncodedReplyHeader|EncodedReplyBody],
+            forward_reply(SocketPid, Address, ReplyPacket)
+         end || ReplyArgs <- ReplyArgsList],
         azdht_router:safe_insert_node(SenderContact),
         ok;
     {error, Reason} ->
         lager:debug("Error ~p.", [Reason]),
         ok
+    end.
+
+handle_find_value_request_packet(RequestBody, Version) ->
+    #find_value_request{
+        id=EncodedKey,
+        max_values=MaxValues} = RequestBody,
+    case azdht_db:find_value(EncodedKey, MaxValues) of
+        [] ->
+            Contacts = azdht_router:closest_to(EncodedKey),
+            NetworkCoordinates = [#position{type=none}],
+            Args = #find_value_reply{
+                    has_continuation = false,
+                    has_values=false,
+                    network_coordinates=NetworkCoordinates,
+                    contacts=Contacts
+                    },
+            {ok, [Args]};
+        Values ->
+            ValuesPerPacket = split_values_into_packets(Values),
+            ValuesPerPacket1 =
+            case higher_or_equal_version(Version, div_and_cont) of
+                true  -> ValuesPerPacket;
+                false -> [hd(ValuesPerPacket)] %% send one packet
+            end,
+            ArgsList = find_value_replies(ValuesPerPacket1, none),
+            {ok, ArgsList}
     end.
 
 handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
@@ -399,10 +465,17 @@ handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
                 lager:debug("Ignore unexpected packet from ~p:~p", [IP, Port]),
                 State;
             {ok, {Client, Timeout, _RequestAction}} ->
-                _ = cancel_timeout(Timeout),
-                _ = gen_server:reply(Client, {ReplyAction, Version, Body}),
-                NewSent = clear_sent_query(IP, Port, ConnId, Sent),
-                State#state{sent=NewSent}
+                case has_continuation(ReplyAction, Body) of
+                    false ->
+                        _ = cancel_timeout(Timeout),
+                        _ = gen_server:reply(Client, {ReplyAction, Version, Body}),
+                        NewSent = clear_sent_query(IP, Port, ConnId, Sent),
+                        State#state{sent=NewSent};
+                    true ->
+                        {Pid, _Ref} = Client,
+                        Pid ! {packet_body, {ReplyAction, Version, Body}},
+                        State
+                end
             end
         end
     catch error:Reason ->
@@ -1046,8 +1119,25 @@ decode_reply_body(store, _Version, Bin) ->
             },
     {Reply, Bin1}.
 
-decode_error(Version, Bin) ->
-    {'TODO', Bin}.
+decode_error(_Version, Bin) ->
+    {Type, Bin1} = decode_int(Bin),
+    TypeName = azdht:error_type(Type),
+    case TypeName of
+        wrong_address ->
+            {SenderAddress, Bin2} = decode_address(Bin1),
+            Error = #azdht_error{
+                type=wrong_address,
+                sender_address=SenderAddress},
+            {Error, Bin2};
+        key_blocked ->
+            {KeyBlockRequest, Bin2} = decode_sized_binary(Bin1),
+            {Signature, Bin3} = decode_sized_binary2(Bin2),
+            Error = #azdht_error{
+                type=key_blocked,
+                key_block_request=KeyBlockRequest,
+                signature=Signature},
+            {Error, Bin3}
+    end.
 
 decode_request_header(Bin) ->
     {ConnId,  Bin1} = decode_long(Bin),
@@ -1275,7 +1365,7 @@ decode_error_reply_v50_test() ->
     Encoded = <<0,0,4,8,0,130,225,204,154,253,215,52,255,72,14,158,50,0,0,0,
                 0,0,202,9,186,151,0,0,0,1,4,2,93,190,244,27,88>>,
     {ReplyHeader, EncodedBody} = decode_reply_header(Encoded),
-    ReplyBody = decode_reply_body(error, 50, EncodedBody),
+    ReplyBody = decode_error(50, EncodedBody),
     io:format(user, "ReplyBody ~p~n", [ReplyBody]),
     ok.
 
@@ -1294,6 +1384,35 @@ decode_network_coordinates_test_() ->
 
 -endif.
 
+find_value_replies([Values|ValuesPerPacket], DivType) ->
+    HasContinuation = ValuesPerPacket =/= [],
+    Reply = #find_value_reply{
+        has_continuation = HasContinuation,
+        has_values=true,
+        diversification_type=DivType,
+        values = Values
+        },
+    [Reply|find_value_replies(ValuesPerPacket, DivType)];
+find_value_replies([], _) ->
+    [].
+
+encoded_value_size(#transport_value{value=Value}) ->
+    byte_size(Value) + ?DHT_FIND_VALUE_TV_HEADER_SIZE.
+
+split_values_into_packets(Values) ->
+    split_values_into_packets_1(Values, ?PACKET_MAX_BYTES, []).
+
+split_values_into_packets_1([Value|Values], Left, Acc) ->
+    Left1 = encoded_value_size(Value),
+    if Left < 0 ->
+        [lists:reverse(Acc)|split_values_into_packets(Values)];
+       true ->
+        split_values_into_packets_1(Values, Left1, [Value|Acc])
+    end;
+split_values_into_packets_1([], _, []) ->
+    [];
+split_values_into_packets_1([], _, Acc) ->
+    [lists:reverse(Acc)].
 
 %% ======================================================================
 %% Helpers for debugging.
@@ -1345,4 +1464,9 @@ format_arity([H|T]) ->
 format_arity(_) ->
     io_lib:format("", []).
 
+
+has_continuation(find_value, <<1, _/binary>>) ->
+    true;
+has_continuation(_, _) ->
+    false.
 

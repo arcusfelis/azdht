@@ -190,3 +190,22 @@
     replication_control :: byte() | undefined
 }).
 
+-record(azdht_error, {
+    %% Type of the error. Possible values are:
+    %% 1: wrong_address
+    %%    originator's address stored in the request is incorrect;
+    %% 2: key_blocked
+    %%    the requested key has been blocked 
+    type :: wrong_address | key_blocked,
+
+    %% type == wrong_addres
+    %% Real originator's address.
+    sender_address :: address() | undefined,
+
+    %% type == key_blocked
+    %% Request that blocks/unlocks the key.
+    key_block_request :: binary(),
+    %% Signature of the request.
+    signature :: binary() | undefined
+}).
+
