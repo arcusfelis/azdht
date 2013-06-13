@@ -244,13 +244,13 @@ find_value(Key) ->
 %% @doc `find_value' for ETorrent.
 get_peers(Key, Contacts) ->
     Values = azdht_find_value:find_value(Key, Contacts),
-    [{IP, Port}
+    lists:usort([{IP, Port}
      || #transport_value{value=Value, originator=#contact{address={IP,_}}}
         <- Values,
-        {ok, Port} <- [decode_port(Value)]].
+        {ok, Port} <- [decode_port(Value)], Port > 1024]).
 
 decode_port(Bin) ->
-    case string:to_integer(integer_to_list(Bin)) of
+    case string:to_integer(binary_to_list(Bin)) of
         {error, Reason} -> {error, Reason};
         {Num, _Tail} -> {ok, Num}
     end.
@@ -342,10 +342,6 @@ handle_info({udp, _Socket, IP, Port, Packet},
     NewState =
     case packet_type(Packet) of
         request ->
-            spawn_link(fun() ->
-%                       etorrent_dht_state:safe_insert_node(IP, Port),
-                        ok
-                end),
             spawn_link(fun() ->
                         handle_request_packet(Packet,
                                               MyInstanceId,
@@ -482,6 +478,11 @@ handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
                       connection_id=ConnId,
                       protocol_version=Version} = ReplyHeader,
         lager:debug("Received reply header ~ts~n", [pretty(ReplyHeader)]),
+        SenderContact = azdht:contact(Version, IP, Port),
+        spawn_link(fun() ->
+                    azdht_router:safe_insert_node(SenderContact),
+                    ok
+            end),
         case action_reply_name(ActionNum) of
         undefined ->
             lager:debug("Unknown action ~p.", [ActionNum]),

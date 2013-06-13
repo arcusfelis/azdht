@@ -72,19 +72,21 @@ handle_cast({async_find_node_reply, Contact,
              #find_node_reply{contacts=ReceivedContacts}},
              #state{called_contacts=Contacts,
                     waiting_contacts=WaitingContacts,
+                    answered_contacts=AnsweredContacts,
                     node_id=NodeId}=State) ->
     lager:debug("Received reply from ~p with contacts:~n~p",
                 [compact_contact(Contact), compact_contacts(ReceivedContacts)]),
     Contacts1 = drop_farther_contacts(ReceivedContacts, Contact, NodeId),
     Contacts2 = drop_duplicates(Contacts1, Contacts),
-    {noreply, State#state{waiting_contacts=Contacts2 ++ WaitingContacts}};
+    {noreply, State#state{waiting_contacts=Contacts2 ++ WaitingContacts,
+                          answered_contacts=sets:add_element(Contact, AnsweredContacts)}};
 handle_cast({async_find_node_error, Contact, Reason}, State) ->
     lager:debug("~p is unreachable. Reason ~p.",
                 [compact_contact(Contact), Reason]),
     {noreply, State}.
 
 handle_info(next_step,
-            State=#state{answered_contacts=[]}) ->
+            State=#state{waiting_contacts=[]}) ->
     reply_to_subscribers(State),
     {stop, normal, State};
 handle_info(next_step,
@@ -131,7 +133,7 @@ drop_farther_contacts(Contacts, BaseContact, NodeId) ->
 drop_duplicates(UnfilteredContacts, ContactSet) ->
     [C || C <- UnfilteredContacts, not sets:is_element(C, ContactSet)].
 
-best_contacts(Contacts, NodeId) ->
+best_contacts(Contacts, NodeId) when is_list(Contacts) ->
     D2C1 = [{compute_distance(node_id(C), NodeId), C} || C <- Contacts],
     D2C2 = lists:usort(D2C1),
     Best = lists:sublist(D2C2, 32),
@@ -149,5 +151,5 @@ reply_to_subscribers(#state{node_id=NodeId,
                             answered_contacts=Contacts,
                             subscribers=Subscribers}) ->
     %% Return alive contacts.
-    BestContacts = best_contacts(Contacts, NodeId),
+    BestContacts = best_contacts(sets:to_list(Contacts), NodeId),
     [gen_server:reply(Subscriber, BestContacts) || Subscriber <- Subscribers].

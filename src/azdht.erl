@@ -24,7 +24,8 @@
          encode_key/1,
          closest_to/3,
          is_id_in_closest_contacts/3,
-         furthest_contact/1
+         furthest_contact/1,
+         compute_distance/2
         ]).
 
 %% Spoof id
