@@ -337,17 +337,22 @@ handle_info({timeout, _, IP, Port, ID}, State) ->
 handle_info({udp, _Socket, IP, Port, Packet},
             #state{instance_id=MyInstanceId} = State) ->
     lager:debug("Receiving a packet from ~p:~p~n", [IP, Port]),
-    lager:debug("Data: ~p~n", [Packet]),
     SocketPid = self(),
     NewState =
     case packet_type(Packet) of
         request ->
             spawn_link(fun() ->
+                    try
                         handle_request_packet(Packet,
                                               MyInstanceId,
                                               {IP, Port},
-                                              SocketPid),
+                                              SocketPid)
+                     catch error:Reason ->
+                        lager:error("Cannot handle a packet because ~p.",
+                                    Reason),
+                        lager:debug("Packet is ~p.", [Packet]),
                         ok
+                      end
                 end),
             State;
         reply ->
@@ -374,11 +379,11 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
         connection_id=ConnId,
         protocol_version=Version
     } = RequestHeader,
-    lager:debug("Decoded header: ~ts~n", [pretty(RequestHeader)]),
-    lager:debug("Body: ~p~n", [Body]),
+%   lager:debug("Decoded header: ~ts~n", [pretty(RequestHeader)]),
+%   lager:debug("Body: ~p~n", [Body]),
     Action = action_request_name(RequestActionNum),
     {RequestBody, _} = decode_request_body(Action, Version, Body),
-    lager:debug("Decoded body: ~ts~n", [pretty(RequestBody)]),
+%   lager:debug("Decoded body: ~ts~n", [pretty(RequestBody)]),
     SenderContact = azdht:contact(Version, Address),
     Result = 
     case Action of
@@ -413,6 +418,7 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
         find_value ->
             handle_find_value_request_packet(RequestBody, Version);
         _ ->
+            lager:debug("Unknown action ~p.", [RequestActionNum]),
             {error, unknown_action}
     end,
     case Result of
@@ -477,7 +483,7 @@ handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
         #reply_header{action=ActionNum,
                       connection_id=ConnId,
                       protocol_version=Version} = ReplyHeader,
-        lager:debug("Received reply header ~ts~n", [pretty(ReplyHeader)]),
+%       lager:debug("Received reply header ~ts~n", [pretty(ReplyHeader)]),
         SenderContact = azdht:contact(Version, IP, Port),
         spawn_link(fun() ->
                     azdht_router:safe_insert_node(SenderContact),
@@ -510,6 +516,7 @@ handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
             Trace = erlang:get_stacktrace(),
             lager:error("Decoding error ~p.~nTrace: ~s.",
                         [Reason, format_trace(Trace)]),
+            lager:debug("Data: ~p~n", [Packet]),
             State
     end.
 
@@ -570,7 +577,6 @@ unique_connection_id(IP, Port, Sent) ->
 
 store_sent_query(IP, Port, ConnId, Client, Timeout, Action, Sent) ->
     K = tkey(IP, Port, ConnId),
-    lager:debug("Waiting transaction ~p.", [K]),
     V = tval(Client, Timeout, Action),
     gb_trees:insert(K, V, Sent).
 
@@ -581,13 +587,11 @@ find_sent_query(IP, Port, ConnId, Sent) ->
             lager:debug("Unexpected transaction ~p.", [K]),
             error;
        {value, Value} ->
-            lager:debug("Handling transaction ~p.", [K]),
             {ok, Value}
     end.
 
 clear_sent_query(IP, Port, ConnId, Sent) ->
     K = tkey(IP, Port, ConnId),
-    lager:debug("Cancel transaction ~p.", [K]),
     gb_trees:delete(K, Sent).
 
 tkey(IP, Port, ConnId) ->

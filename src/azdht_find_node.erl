@@ -70,14 +70,14 @@ handle_call(subscribe, From, State=#state{subscribers=Subscribers}) ->
 
 handle_cast({async_find_node_reply, Contact,
              #find_node_reply{contacts=ReceivedContacts}},
-             #state{called_contacts=Contacts,
+             #state{called_contacts=CalledContacts,
                     waiting_contacts=WaitingContacts,
                     answered_contacts=AnsweredContacts,
                     node_id=NodeId}=State) ->
-    lager:debug("Received reply from ~p with contacts:~n~p",
-                [compact_contact(Contact), compact_contacts(ReceivedContacts)]),
+    lager:debug("Received reply from ~p with ~B contacts.",
+                [compact_contact(Contact), length(ReceivedContacts)]),
     Contacts1 = drop_farther_contacts(ReceivedContacts, Contact, NodeId),
-    Contacts2 = drop_duplicates(Contacts1, Contacts),
+    Contacts2 = drop_duplicates(Contacts1, CalledContacts),
     {noreply, State#state{waiting_contacts=Contacts2 ++ WaitingContacts,
                           answered_contacts=sets:add_element(Contact, AnsweredContacts)}};
 handle_cast({async_find_node_error, Contact, Reason}, State) ->
@@ -91,15 +91,16 @@ handle_info(next_step,
     {stop, normal, State};
 handle_info(next_step,
             State=#state{node_id=NodeId,
-                         called_contacts=Contacts,
+                         called_contacts=CalledContacts,
                          waiting_contacts=WaitingContacts}) ->
     %% Run the next search iteration.
     BestContacts = best_contacts(WaitingContacts, NodeId),
-    lager:debug("Best contacts:~n~p", [BestContacts]),
+    lager:debug("There are ~B best contacts:~n~p",
+                [length(BestContacts), azdht:compact_contacts(BestContacts)]),
     [async_find_node(Contact, NodeId) || Contact <- BestContacts],
     State2 = State#state{waiting_contacts=[],
                          called_contacts=sets:union(sets:from_list(BestContacts),
-                                                    Contacts)},
+                                                    CalledContacts)},
     schedule_next_step(),
     {noreply, State2}.
 
@@ -136,7 +137,7 @@ drop_duplicates(UnfilteredContacts, ContactSet) ->
 best_contacts(Contacts, NodeId) when is_list(Contacts) ->
     D2C1 = [{compute_distance(node_id(C), NodeId), C} || C <- Contacts],
     D2C2 = lists:usort(D2C1),
-    Best = lists:sublist(D2C2, 32),
+    Best = lists:sublist(D2C2, 16),
     [C || {_D,C} <- Best].
 
 

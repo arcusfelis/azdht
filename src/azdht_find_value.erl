@@ -77,8 +77,8 @@ handle_cast({async_find_value_reply, Contact,
              #state{called_contacts=Contacts,
                     waiting_contacts=WaitingContacts,
                     encoded_key=EncodedKey}=State) ->
-    lager:debug("Received reply from ~p with contacts:~n~p",
-                [compact_contact(Contact), compact_contacts(ReceivedContacts)]),
+    lager:debug("Received reply from ~p with ~B contacts.",
+                [compact_contact(Contact), length(ReceivedContacts)]),
     Contacts1 = drop_farther_contacts(ReceivedContacts, Contact, EncodedKey),
     Contacts2 = drop_duplicates(Contacts1, Contacts),
     {noreply, State#state{waiting_contacts=Contacts2 ++ WaitingContacts}};
@@ -87,8 +87,8 @@ handle_cast({async_find_value_reply, Contact,
              #state{answered_count=AnsweredCount,
                     answered_contacts=Answered,
                     collected_values=CollectedValues}=State) ->
-    lager:debug("Received reply from ~p with values:~n~p",
-                [compact_contact(Contact), Values]),
+    lager:debug("Received reply from ~p with ~B values.",
+                [compact_contact(Contact), length(Values)]),
     State2 = State#state{answered_count=AnsweredCount+1,
                          answered_contacts=sets:add_element(Contact, Answered),
                          collected_values=Values ++ CollectedValues},
@@ -108,27 +108,29 @@ handle_info(next_step,
 handle_info(next_step,
             State=#state{collected_values=Values,
                          answered_count=AnsweredCount}) when AnsweredCount > 3 ->
-    lager:debug("Values ~p", [Values]),
+    lager:debug("Collected ~B values.", [length(Values)]),
     reply_to_subscribers(State),
     {stop, normal, State};
 handle_info(next_step,
             State=#state{collected_values=Values,
                          waiting_contacts=[],
                          answered_count=AnsweredCount}) when AnsweredCount > 0 ->
-    lager:debug("Not enough nodes were called. Values ~p", [Values]),
+    lager:warning("Not enough (only ~B) nodes were called.", [AnsweredCount]),
+    lager:debug("Collected ~B values.", [length(Values)]),
     reply_to_subscribers(State),
     {stop, normal, State};
 handle_info(next_step,
             State=#state{encoded_key=EncodedKey,
-                         called_contacts=Contacts,
+                         called_contacts=CalledContacts,
                          waiting_contacts=WaitingContacts}) ->
     %% Run the next search iteration.
     BestContacts = best_contacts(WaitingContacts, EncodedKey),
-    lager:debug("Best contacts:~n~p", [BestContacts]),
+    lager:debug("There are ~B best contacts: ~p",
+                [length(BestContacts), azdht:compact_contacts(BestContacts)]),
     [async_find_value(Contact, EncodedKey) || Contact <- BestContacts],
     State2 = State#state{waiting_contacts=[],
                          called_contacts=sets:union(sets:from_list(BestContacts),
-                                                    Contacts)},
+                                                    CalledContacts)},
     schedule_next_step(),
     {noreply, State2}.
 
@@ -165,7 +167,7 @@ drop_duplicates(UnfilteredContacts, ContactSet) ->
 best_contacts(Contacts, EncodedKey) ->
     D2C1 = [{compute_distance(node_id(C), EncodedKey), C} || C <- Contacts],
     D2C2 = lists:usort(D2C1),
-    Best = lists:sublist(D2C2, 32),
+    Best = lists:sublist(D2C2, 16),
     [C || {_D,C} <- Best].
 
 
