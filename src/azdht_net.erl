@@ -18,7 +18,10 @@
          find_node/2,
          find_value/2,
          store/4,
-         announce/4]).
+
+         announce/4,
+         get_peers/2,
+         spoof_id/1]).
 
 %% Needs a router.
 -export([find_node/1,
@@ -148,10 +151,18 @@ find_node(Contact, Target)  ->
         Values  ->
             case decode_reply_body(find_node, Values) of
                 {error, Reason} -> {error, Reason};
-                {ok, Reply} ->
+                {ok, Reply=#find_node_reply{spoof_id=SpoofId}} ->
+                    azdht_spoof_cache:store_spoof_id(Contact, SpoofId),
                     azdht_router:log_request_from(Contact),
                     {ok, Reply}
             end
+    end.
+
+%% @doc Request a spoof ID.
+spoof_id(Contact) ->
+    case find_node(Contact, azdht:node_id(Contact)) of
+        {ok, #find_node_reply{spoof_id=SpoofId}} -> {ok, SpoofId};
+        {error, Reason} -> {error, Reason}
     end.
 
 
@@ -201,7 +212,7 @@ store(Contact, SpoofID, Keys, ValueGroups) ->
         Values -> decode_reply_body(store, Values)
     end.
 
-announce(Contact, SpoofID, Key, MyPortBT) ->
+announce(Contact, SpoofID, EncodedKey, MyPortBT) ->
     {MegaSecs, Secs, MicroSecs} = now(),
     Secs2 = MegaSecs * 1000000 + Secs,
     MicroSecs2 = Secs2 * 1000000 + MicroSecs,
@@ -214,7 +225,7 @@ announce(Contact, SpoofID, Key, MyPortBT) ->
         replication_control = 0,
         originator = my_contact()
     },
-    store(Contact, SpoofID, [Key], [[Value]]).
+    store(Contact, SpoofID, [EncodedKey], [[Value]]).
 
 
 %% ==================================================================
@@ -223,11 +234,26 @@ find_node(NodeID) ->
     Contacts = azdht_router:closest_to(NodeID),
     azdht_find_node:find_node(NodeID, Contacts).
 
+
 -spec find_value(key()) -> list(value()).
 find_value(Key) ->
     EncodedKey = azdht:encode_key(Key),
     Contacts = azdht_router:closest_to(EncodedKey),
     azdht_find_value:find_value(Key, Contacts).
+
+%% @doc `find_value' for ETorrent.
+get_peers(Key, Contacts) ->
+    Values = azdht_find_value:find_value(Key, Contacts),
+    [{IP, Port}
+     || #transport_value{value=Value, originator=#contact{address={IP,_}}}
+        <- Values,
+        {ok, Port} <- [decode_port(Value)]].
+
+decode_port(Bin) ->
+    case string:to_integer(integer_to_list(Bin)) of
+        {error, Reason} -> {error, Reason};
+        {Num, _Tail} -> {ok, Num}
+    end.
 
 %% ==================================================================
 
@@ -300,7 +326,7 @@ handle_info({timeout, _, IP, Port, ID}, State) ->
     NewState = case find_sent_query(IP, Port, ID, Sent) of
         error ->
             State;
-        {ok, {Client, _Timeout, Action}} ->
+        {ok, {Client, _Timeout, _Action}} ->
             _ = gen_server:reply(Client, timeout),
             NewSent = clear_sent_query(IP, Port, ID, Sent),
             State#state{sent=NewSent}
@@ -875,12 +901,12 @@ encode_request_body(find_node, Version, #find_node_request{
      [[encode_int(NodeStatus), encode_int(DhtSize)]
      || higher_or_equal_version(Version, more_node_status)]
     ];
-encode_request_body(find_value, Version, #find_value_request{
+encode_request_body(find_value, _Version, #find_value_request{
                 id=ID,
                 flags=Flags,
                 max_values=MaxValues}) ->
     [encode_sized_binary(ID), encode_byte(Flags), encode_byte(MaxValues)];
-encode_request_body(ping, Version, _) ->
+encode_request_body(ping, _Version, _) ->
     [];
 encode_request_body(store, Version, #store_request{
                 spoof_id=SpoofId,
@@ -966,7 +992,7 @@ encode_reply_body(store, _Version, #store_reply{diversifications=Divs}) ->
     encode_sized_bytes([diversification_type_num(Div) || Div <- Divs]).
 
 
-decode_request_body(ping, Version, Bin) ->
+decode_request_body(ping, _Version, Bin) ->
     {ping, Bin};
 decode_request_body(find_node, Version, Bin) ->
     {ID, Bin1} = decode_sized_binary(Bin),

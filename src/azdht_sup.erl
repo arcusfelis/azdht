@@ -49,8 +49,11 @@ init([ListenIP, ListenPort, ExternalIP, StateFile]) ->
     DB = {azdht_db,
            {azdht_db, start_link, []},
             permanent, 5000, worker, [azdht_db]},
+    Cache = {azdht_spoof_cache,
+           {azdht_spoof_cache, start_link, []},
+            permanent, 5000, worker, [azdht_spoof_cache]},
 
-    {ok, {{one_for_all, 3, 60}, [Net, Router, DB]}}.
+    {ok, {{one_for_all, 3, 60}, [Cache, Net, Router, DB]}}.
 
 
 %% ====================================================================

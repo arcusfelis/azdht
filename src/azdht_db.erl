@@ -171,7 +171,6 @@ is_cache_forwarding(SenderContact, ValueGroups) ->
 %
 % Public interface
 %
-%-spec find_node(NodeId, Contacts) -> Values.
 start_link() ->
     gen_server:start_link({local, srv_name()}, ?MODULE, [], []).
 

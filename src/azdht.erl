@@ -30,7 +30,8 @@
 %% Spoof id
 -export([generate_spoof_key/0,
          spoof_id/1,
-         spoof_id/4]).
+         spoof_id/4,
+         request_spoof_id/1]).
 
 
 -include_lib("azdht/include/azdht.hrl").
@@ -224,6 +225,12 @@ is_id_in_closest_contacts_1(_, _, _, _, _) -> false.
 %% Spoof ID
 %% ========
 
+%% @doc Get a spoof ID from Contact.
+%% @impure
+request_spoof_id(Contact) ->
+    azdht_spoof_cache:spoof_id(Contact).
+
+%% @doc Generage a spoof ID for SenderContact.
 %% @impure
 spoof_id(SenderContact) ->
     MyContact = azdht_net:my_contact(),
