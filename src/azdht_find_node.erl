@@ -137,7 +137,7 @@ drop_duplicates(UnfilteredContacts, ContactSet) ->
 best_contacts(Contacts, NodeId) when is_list(Contacts) ->
     D2C1 = [{compute_distance(node_id(C), NodeId), C} || C <- Contacts],
     D2C2 = lists:usort(D2C1),
-    Best = lists:sublist(D2C2, 16),
+    Best = lists:sublist(D2C2, 20),
     [C || {_D,C} <- Best].
 
 
