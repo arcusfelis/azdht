@@ -107,6 +107,15 @@ store_request_1(Key, NewValues) ->
         false ->
             lists:foreach(
                 fun
+                ({#transport_value{value = <<>>}=NV, undefined}) ->
+                    lager:debug("Ignore entry ~p = ~p.", [Key, NV]);
+
+                %% A removal of a value is implemented through
+                %% a zero-sized store. 
+                ({#transport_value{value = <<>>}, OV}) ->
+                    lager:debug("Delete entry ~p = ~p.", [Key, OV]),
+                    ets:delete_object(table(), OV);
+
                 ({NV, undefined}) ->
                     lager:debug("Insert entry ~p = ~p.", [Key, NV]),
                     insert_value(Key, NV);
@@ -116,6 +125,7 @@ store_request_1(Key, NewValues) ->
                     ets:delete_object(table(), OV),
                     insert_value(Key, NV)
                 end,
+                %% Form are list of pairs with the same originator.
                 sort_and_left_join(#transport_value.originator,
                                    NewValues, OldValues)),
             none
