@@ -69,6 +69,7 @@ total_size() ->
     Size.
 
 store_request(SpoofId, SenderContact, Keys, ValueGroups) ->
+    lager:info("Store request from ~p.", [azdht:compact_contact(SenderContact)]),
     MyContact = azdht_net:my_contact(),
     SpoofId1 = azdht:spoof_id(SenderContact), 
     lager:debug("SpoofId ~p, SpoofId1 ~p.", [SpoofId, SpoofId1]),

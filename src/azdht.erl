@@ -20,12 +20,15 @@
          action_reply_num/1,
          diversification_type/1,
          diversification_type_num/1,
+         data_packet_type/1,
+         data_packet_type_num/1,
          random_key/0,
          encode_key/1,
          closest_to/3,
          is_id_in_closest_contacts/3,
          furthest_contact/1,
-         compute_distance/2
+         compute_distance/2,
+         decrypt_torrent/2
         ]).
 
 %% Spoof id
@@ -190,7 +193,8 @@ furthest_contact(Contact) ->
 %% @pure
 -spec closest_to(node_id(), list(contact()), non_neg_integer()) ->
     list(nodeinfo()).
-closest_to(ID, Contacts, NumContacts) ->
+closest_to(ID, Contacts, NumContacts)
+    when is_binary(ID), byte_size(ID) =:= 20 ->
     WithDist = [{compute_distance(node_id(Contact), ID), Contact}
                || Contact <- Contacts],
     Sorted = lists:keysort(1, WithDist),
@@ -337,6 +341,7 @@ action_request_num(ActionName) when is_atom(ActionName) ->
         store      -> 1026;
         find_node  -> 1028;
         find_value -> 1030;
+        data       -> 1035;
         _          -> undefined
     end.
 
@@ -346,6 +351,7 @@ action_reply_num(ActionName) when is_atom(ActionName) ->
         store      -> 1027;
         find_node  -> 1029;
         find_value -> 1031;
+        data       -> 1035;
         _          -> undefined
     end.
 
@@ -360,6 +366,9 @@ action_name(ActionNum) when is_integer(ActionNum) ->
         1030 -> find_value;
         1031 -> find_value;
         1032 -> error;
+        %% DHTUDPPacketData extends DHTUDPPacketRequest
+        %% both request and reply
+        1035 -> data;
         _    -> undefined
     end.
 
@@ -370,6 +379,7 @@ action_reply_name(ActionNum) when is_integer(ActionNum) ->
         1029 -> find_node;
         1031 -> find_value;
         1032 -> error; %% Special care
+        1035 -> data;
         _    -> undefined
     end.
 
@@ -379,6 +389,7 @@ action_request_name(ActionNum) when is_integer(ActionNum) ->
         1026 -> store;
         1028 -> find_node;
         1030 -> find_value;
+        1035 -> data;
         _    -> undefined
     end.
 
@@ -392,6 +403,22 @@ error_type(2) -> key_blocked.
 diversification_type_num(none)      -> 1;
 diversification_type_num(frequency) -> 2;
 diversification_type_num(size)      -> 3.
+
+data_packet_type(TypeNum) ->
+    case TypeNum of
+        0 -> read_request;
+        1 -> read_reply;
+        2 -> write_request;
+        3 -> write_reply
+    end.
+
+data_packet_type_num(TypeName) ->
+    case TypeName of
+        read_request    -> 0;
+        read_reply      -> 1;
+        write_request   -> 2;
+        write_reply     -> 3
+    end.
 
 %% Crypto
 %% ======
@@ -421,6 +448,43 @@ random_key() ->
 encode_key(Key) ->
     crypto:sha(Key).
 
+
+%% DESede/ECB/PKCS5Padding is used here.
+%% see DDBaseTTTorrent.doCrypt
+decrypt_torrent(IH, TorrentData) ->
+    Key = infohash_to_key(IH),
+    strip_padding(decrypt_desede_ecb_pkcs5padding(Key, TorrentData)).
+
+strip_padding(<<Bin:1/binary,7,7,7,7,7,7,7>>) -> Bin;
+strip_padding(<<Bin:2/binary,  6,6,6,6,6,6>>) -> Bin;
+strip_padding(<<Bin:3/binary,    5,5,5,5,5>>) -> Bin;
+strip_padding(<<Bin:4/binary,      4,4,4,4>>) -> Bin;
+strip_padding(<<Bin:5/binary,        3,3,3>>) -> Bin;
+strip_padding(<<Bin:6/binary,          2,2>>) -> Bin;
+strip_padding(<<Bin:7/binary,            1>>) -> Bin;
+strip_padding(Text) ->
+    Len = byte_size(Text),
+    HLen = Len - 8,
+    <<H:HLen/binary, T/binary>> = Text,
+    <<H/binary, (strip_padding(T))/binary>>.
+
+
+%% hash is 20 bytes so we've got 4 zeros at the end.
+infohash_to_key(<<_:160>> = IH) ->
+    <<IH/binary, 0:32>>.
+
+decrypt_desede_ecb_pkcs5padding(Key, Data) ->
+    << <<(desded(Key, Cipher))/binary>>
+       || <<Cipher:8/binary>> <= Data >>.
+
+desede(<<K1:8/binary, K2:8/binary, K3:8/binary>>, Plain) ->
+    e(K3, d(K2, e(K1, Plain))).
+
+desded(<<K1:8/binary, K2:8/binary, K3:8/binary>>, Cipher) ->
+    d(K1, e(K2, d(K3, Cipher))).
+
+e(K, X) -> crypto:des_ecb_encrypt(K, X).
+d(K, X) -> crypto:des_ecb_decrypt(K, X).
 
 -ifdef(TEST).
 %% DES INPUT BLOCK  = f  o  r  _  _  _  _  _

@@ -60,6 +60,9 @@
          dump_state/0,
          dump_state/1]).
 
+%% Debug.
+-export([node_list/0]).
+
 -include_lib("azdht/include/azdht.hrl").
 -define(in_range(IDExpr, MinExpr, MaxExpr),
     ((IDExpr >= MinExpr) and (IDExpr < MaxExpr))).
@@ -174,7 +177,8 @@ closest_to(NodeID, NumNodes) ->
 
 -spec closest_to(nodeid(), pos_integer(), boolean()) -> list(contact()).
 closest_to(NodeID, NumNodes, WithMe)
-    when is_boolean(WithMe), is_integer(NumNodes) ->
+    when is_boolean(WithMe), is_integer(NumNodes),
+         is_binary(NodeID), byte_size(NodeID) =:= 20 ->
     gen_server:call(srv_name(), {closest_to, NodeID, NumNodes, WithMe}).
 
 -spec log_request_timeout(contact()) -> 'ok'.
@@ -197,6 +201,9 @@ dump_state() ->
 
 dump_state(Filename) ->
     gen_server:call(srv_name(), {dump_state, Filename}).
+
+node_list() ->
+    gen_server:call(srv_name(), node_list).
 
 -spec keepalive(contact()) -> 'ok'.
 keepalive(Contact) ->
@@ -543,6 +550,11 @@ handle_call({dump_state, StateFile}, _From, State) ->
         buckets=Buckets} = State,
     catch dump_state(StateFile, Self, b_node_list(Buckets)),
     {reply, ok, State};
+
+handle_call(node_list, _From, State) ->
+    #state{
+        buckets=Buckets} = State,
+    {reply, b_node_list(Buckets), State};
 
 handle_call(node_id, _From, State) ->
     #state{node_id=Self} = State,

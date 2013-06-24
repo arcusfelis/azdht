@@ -18,12 +18,13 @@
          find_node/2,
          find_value/2,
          store/4,
+         send_data/2,
 
          announce/4,
          get_peers/2,
          spoof_id/1]).
 
-%% Needs a router.
+%% These functions use the router.
 -export([find_node/1,
          find_value/1]).
 
@@ -36,7 +37,9 @@
          action_request_num/1,
          action_request_name/1,
          diversification_type/1,
-         diversification_type_num/1
+         diversification_type_num/1,
+         data_packet_type/1,
+         data_packet_type_num/1
         ]).
 
 
@@ -47,6 +50,7 @@
 -define(MAX_UINT, 16#FFFFFFFF).
 
 -include_lib("azdht/include/azdht.hrl").
+%% DHTUDPPacketReply.DHT_HEADER_SIZE
 -define(DHT_REPLY_HEADER_SIZE,
        (8 %% PRUDPPacketReply.PR_HEADER_SIZE
        +8 %% con id
@@ -76,6 +80,10 @@
 
 -define(MAX_SIZE_FIND_VALUE_REPLY,
         (?PACKET_MAX_BYTES - ?DHT_FIND_VALUE_HEADER_SIZE)).
+
+%% DHTUDPPacketData.MAX_DATA_SIZE
+-define(MAX_DATA_SIZE,
+        (?PACKET_MAX_BYTES - ?DHT_REPLY_HEADER_SIZE - 1 - 21 - 21 - 14)).
 
 % gen_server callbacks
 -export([init/1,
@@ -158,6 +166,41 @@ find_node(Contact, Target)  ->
             end
     end.
 
+send_data(Contact, DataReq) ->
+    case gen_server:call(srv_name(), {send_data, Contact, DataReq}, 60000) of
+        timeout ->
+            receive_multi_reply(),
+            {error, timeout};
+        Values  ->
+            self() ! {multi_reply, Values},
+            concat_data_requests(receive_multi_reply()) 
+    end.
+
+%% @private
+concat_data_requests([_|_]=Values) ->
+    Values1 = lists:keysort(#data_request.start_position, Values),
+    concat_data_requests_1(Values1).
+
+%% @private
+concat_data_requests_1([H|T]) ->
+    concat_data_requests_2(T, H).
+
+%% @private
+concat_data_requests_2(
+    [ #data_request{start_position=HS, length=HL, data=HD, total_length=TL, key=K}|T],
+    A=#data_request{start_position=AS, length=AL, data=AD, total_length=TL, key=K})
+        when AS + AL =:= HS, HS + HL =< TL ->
+    A2 = A#data_request{
+        length=AL+HL,
+        data = <<AD/binary, HD/binary>>},
+    concat_data_requests_2(T, A2);
+concat_data_requests_2([], A) ->
+    {ok, A};
+concat_data_requests_2([H|_], A) ->
+    lager:debug("H: ~s~nA: ~s", [pretty(H), pretty(A)]),
+    {error, dropped_packet}.
+
+
 %% @doc Request a spoof ID.
 spoof_id(Contact) ->
     case find_node(Contact, azdht:node_id(Contact)) of
@@ -169,12 +212,12 @@ spoof_id(Contact) ->
 find_value(Contact, EncodedKey) ->
     case gen_server:call(srv_name(), {find_value, Contact, EncodedKey}) of
         timeout ->
-            receive_packets(),
+            receive_multi_reply(),
             {error, timeout};
         Values  ->
-            self() ! {packet_body, Values},
+            self() ! {multi_reply, Values},
             Replies = [decode_reply_body(find_value, Values1)
-                       || Values1 <- receive_packets()],
+                       || Values1 <- receive_multi_reply()],
             case lists:any(fun is_error/1, Replies) of
                 true  ->
                     {error, Replies};
@@ -183,16 +226,19 @@ find_value(Contact, EncodedKey) ->
             end
     end.
 
-receive_packets() ->
+%% @private
+receive_multi_reply() ->
     receive
-        {packet_body, Values} -> [Values|receive_packets()]
+        {multi_reply, Values} -> [Values|receive_multi_reply()]
     after 0 -> []
     end.
 
+%% @private
 is_error({error, _}) -> true;
 is_error({ok, _})    -> false.
 
 
+%% @private
 merge_find_value_bodies([#find_value_reply{values=V1, has_continuation=true},
                       H2=#find_value_reply{values=V2}|T]) ->
     merge_find_value_bodies([H2#find_value_reply{values=V1 ++ V2}|T]);
@@ -209,7 +255,17 @@ store(Contact, SpoofID, Keys, ValueGroups) ->
     Msg = {store, Contact, SpoofID, Keys, ValueGroups},
     case gen_server:call(srv_name(), Msg) of
         timeout -> {error, timeout};
-        Values -> decode_reply_body(store, Values)
+        Values ->
+            case decode_reply_body(store, Values) of
+                {error, Reason} ->
+                    lager:error("Store to ~p failed with ~p.",
+                                [azdht:compact_contact(Contact), Reason]),
+                    {error, Reason};
+                {ok, Result} ->
+                    lager:info("Store to ~p successed.",
+                                [azdht:compact_contact(Contact)]),
+                    {ok, Result}
+            end
     end.
 
 announce(Contact, SpoofID, EncodedKey, MyPortBT) ->
@@ -261,6 +317,16 @@ decode_port(Bin) ->
 forward_reply(SocketPid, Address, Reply) ->
     gen_server:cast(SocketPid, {forward_reply, Address, Reply}).
 
+%% Send program generated reply.
+%% Because data packets uses one action for both request and reply (action 1035),
+%% we need this function to retransmit data to the gen_server's client.
+%% @private
+push_reply(Address, ConnId, Reply, HasContinuation) ->
+    Msg = {push_reply, Address, ConnId, Reply, HasContinuation},
+    %% Server can submit reply to the client, using ConnId.
+    gen_server:cast(srv_name(), Msg).
+    
+
 %% ==================================================================
 
 init([ListenIP, ListenPort, ExternalIP]) ->
@@ -296,6 +362,9 @@ handle_call({store, Contact, SpoofID, Keys, ValueGroups}, From, State) ->
                           keys=Keys,
                           value_groups=ValueGroups},
     do_send_query(Action, Args, Contact, From, State);
+handle_call({send_data, Contact, Args}, From, State) ->
+    Action = data,
+    do_send_query(Action, Args, Contact, From, State);
 
 handle_call(get_node_port, _From, State) ->
     #state{socket=Socket} = State,
@@ -316,6 +385,34 @@ handle_cast({forward_reply, {IP, Port}, EncodedReply}, State) ->
         {error, eagain} ->
             {noreply, State}
     end;
+
+handle_cast({push_reply, {IP, Port}, ConnId, Reply, HasContinuation}, State) ->
+    #state{sent=Sent} = State,
+    State2 = 
+    case find_sent_query(IP, Port, ConnId, Sent) of
+    error ->
+        lager:debug("Ignore unexpected packet from ~p:~p", [IP, Port]),
+        State;
+    {ok, {Client, Timeout, Action}} ->
+        case HasContinuation of
+            false ->
+                _ = cancel_timeout(Timeout),
+                _ = gen_server:reply(Client, Reply),
+                NewSent = clear_sent_query(IP, Port, ConnId, Sent),
+                State#state{sent=NewSent};
+            true ->
+                %% Update timeout
+                _ = cancel_timeout(Timeout),
+                Sent2 = clear_sent_query(IP, Port, ConnId, Sent),
+                TRef = timeout_reference(IP, Port, ConnId),
+                Sent3 = store_sent_query(IP, Port, ConnId, Client, TRef, Action, Sent2),
+                %% Reply to the client
+                {Pid, _Ref} = Client,
+                Pid ! {multi_reply, Reply},
+                State#state{sent=Sent3}
+        end
+    end,
+    {noreply, State2};
 
 handle_cast(not_implemented, State) ->
     {noreply, State}.
@@ -349,10 +446,10 @@ handle_info({udp, _Socket, IP, Port, Packet},
                                               SocketPid)
                      catch error:Reason ->
                         lager:error("Cannot handle a packet because ~p.",
-                                    Reason),
+                                    [Reason]),
                         lager:debug("Packet is ~p.", [Packet]),
                         ok
-                      end
+                     end
                 end),
             State;
         reply ->
@@ -385,12 +482,13 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
     {RequestBody, _} = decode_request_body(Action, Version, Body),
 %   lager:debug("Decoded body: ~ts~n", [pretty(RequestBody)]),
     SenderContact = azdht:contact(Version, Address),
+    lager:info("Incoming request ~p from ~p.", [Action, Address]),
     Result = 
     case Action of
         ping ->
             NetworkCoordinates = [#position{type=none}],
             Args = #ping_reply{network_coordinates=NetworkCoordinates},
-            {ok, [Args]};
+            {result, [Args], [], []};
         store ->
             #store_request{
                 spoof_id=SpoofId,
@@ -400,7 +498,7 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
                                         Keys, ValueGroups) of
                 {ok, Divs} ->
                     Args = #store_reply{diversifications=Divs},
-                    {ok, [Args]};
+                    {result, [Args], [], []};
                 {error, _Reason} -> {error, _Reason}
             end;
         find_node ->
@@ -414,15 +512,26 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
                 dht_size=0,
                 network_coordinates=NetworkCoordinates,
                 contacts=Contacts},
-            {ok, [Args]};
+            {result, [Args], [], []};
         find_value ->
             handle_find_value_request_packet(RequestBody, Version);
+        data ->
+            handle_data_request_packet(RequestBody);
         _ ->
-            lager:debug("Unknown action ~p.", [RequestActionNum]),
+            lager:debug("Unknown action ~p.~n"
+                         "Head: ~ts~n"
+                         "Body: ~ts",
+                        [RequestActionNum,
+                         pretty(RequestHeader),
+                         pretty(RequestBody)]),
             {error, unknown_action}
     end,
     case Result of
-        {ok, ReplyArgsList} ->
+        {result, ReplyArgsList, ClientContReplies, ClientReplies} ->
+        [push_reply(Address, ConnId, Reply, true)  %% HasContinuation = true
+         || Reply <- ClientContReplies],
+        [push_reply(Address, ConnId, Reply, false) %% HasContinuation = false
+         || Reply <- ClientReplies],
         ReplyActionNum = action_reply_num(Action),
         PacketVersion = min(proto_version_num(supported), Version),
         ReplyHeader = #reply_header{
@@ -443,10 +552,11 @@ handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
             ReplyPacket = [EncodedReplyHeader|EncodedReplyBody],
             forward_reply(SocketPid, Address, ReplyPacket)
          end || ReplyArgs <- ReplyArgsList],
+        lager:info("Forwarded reply on ~p.", [Action]),
         azdht_router:safe_insert_node(SenderContact),
         ok;
     {error, Reason} ->
-        lager:debug("Error ~p.", [Reason]),
+        lager:error("Ignore error ~p.", [Reason]),
         ok
     end.
 
@@ -464,7 +574,7 @@ handle_find_value_request_packet(RequestBody, Version) ->
                     network_coordinates=NetworkCoordinates,
                     contacts=Contacts
                     },
-            {ok, [Args]};
+            {result, [Args], [], []};
         Values ->
             ValuesPerPacket = split_values_into_packets(Values),
             ValuesPerPacket1 =
@@ -473,8 +583,20 @@ handle_find_value_request_packet(RequestBody, Version) ->
                 false -> [hd(ValuesPerPacket)] %% send one packet
             end,
             ArgsList = find_value_replies(ValuesPerPacket1, none),
-            {ok, ArgsList}
+            {result, ArgsList, [], []}
     end.
+
+handle_data_request_packet(X=#data_request{
+                packet_type = read_reply,
+                start_position=StartPosition,
+                length=Length,
+                total_length=TotalLength
+                }) ->
+    EndPosition = StartPosition + Length,
+    if EndPosition =:= TotalLength -> {result, [], [], [X]}; %% last
+       EndPosition  <  TotalLength -> {result, [], [X], []}  %% wait for more
+    end.
+
 
 handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
     try decode_reply_header(Packet) of
@@ -507,7 +629,7 @@ handle_reply_packet(Packet, IP, Port, State=#state{sent=Sent}) ->
                         State#state{sent=NewSent};
                     true ->
                         {Pid, _Ref} = Client,
-                        Pid ! {packet_body, {ReplyAction, Version, Body}},
+                        Pid ! {multi_reply, {ReplyAction, Version, Body}},
                         State
                 end
             end
@@ -926,6 +1048,22 @@ encode_request_body(store, Version, #store_request{
     end,
     encode_keys(Keys),
     encode_value_groups(ValueGroups, Version)
+    ];
+encode_request_body(data, _Version, #data_request{
+        packet_type=PacketTypeName,
+        key=Key,
+        transfer_key=TransferKey,
+        start_position=StartPosition,
+        length=Length,
+        total_length=TotalLength,
+        data=Data}) ->
+    [encode_byte(data_packet_type_num(PacketTypeName)),
+     encode_sized_binary(TransferKey),
+     encode_sized_binary(Key),
+     encode_int(StartPosition),
+     encode_int(Length),
+     encode_int(TotalLength),
+     encode_sized_binary2(Data)
     ].
 
 encode_reply_body(ping, Version, #ping_reply{
@@ -1042,6 +1180,23 @@ decode_request_body(store, Version, Bin) ->
         value_groups=ValueGroups
     },
     {Request, Bin3};
+decode_request_body(data, _Version, Bin) ->
+    {PacketType, Bin1} = decode_byte(Bin),
+    {TransferKey, Bin2} = decode_sized_binary(Bin1),
+    {Key, Bin3} = decode_sized_binary(Bin2),
+    {StartPosition, Bin4} = decode_int(Bin3),
+    {Length, Bin5} = decode_int(Bin4),
+    {TotalLength, Bin6} = decode_int(Bin5),
+    {Data, Bin7} = decode_sized_binary2(Bin6),
+    Request = #data_request{
+        packet_type=data_packet_type(PacketType),
+        key=Key,
+        transfer_key=TransferKey,
+        start_position=StartPosition,
+        length=Length,
+        total_length=TotalLength,
+        data=Data},
+    {Request, Bin7};
 decode_request_body(_Action, _Version, Bin) ->
     {unknown, Bin}.
 
@@ -1473,6 +1628,7 @@ record_definition_list() ->
     ,?REC_DEF(find_node_request)
     ,?REC_DEF(request_header)
     ,?REC_DEF(reply_header)
+    ,?REC_DEF(data_request)
     ].
 
 format_trace([{M,F,A,PL}|T]) ->
@@ -1501,5 +1657,4 @@ has_continuation(find_value, <<1, _/binary>>) ->
     true;
 has_continuation(_, _) ->
     false.
-
 

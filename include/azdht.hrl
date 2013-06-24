@@ -209,3 +209,15 @@
     signature :: binary() | undefined
 }).
 
+-record(data_request, {
+    packet_type :: atom(),
+    key :: binary(),
+    transfer_key :: binary(),
+    start_position :: non_neg_integer(),
+    %% If length == 0, than everything will be transmitted in series of
+    %% packets.
+    length :: non_neg_integer(),
+    total_length :: non_neg_integer(),
+    data :: binary()
+}).
+

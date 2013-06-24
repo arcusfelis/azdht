@@ -5,6 +5,5 @@ cd `dirname $0`
 exec erl -pa $PWD/ebin edit $PWD/deps/*/ebin \
     -boot start_sasl \
     -sname azdht \
-    -s azdht_app \
-    -config ~/.config/azdht
+    -s azdht_app 
 
