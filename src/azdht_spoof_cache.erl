@@ -89,7 +89,7 @@ handle_info(clean_timeout, State) ->
 terminate(_, _State) ->
     ok.
 
-code_change(_, _, State) ->
+code_change(_, State, _) ->
     {ok, State}.
 
 %% ==================================================================

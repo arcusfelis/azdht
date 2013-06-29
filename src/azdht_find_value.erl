@@ -137,7 +137,7 @@ handle_info(next_step,
 terminate(_, _State) ->
     ok.
 
-code_change(_, _, State) ->
+code_change(_, State, _) ->
     {ok, State}.
 
 %% ==================================================================

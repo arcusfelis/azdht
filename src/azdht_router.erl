@@ -676,7 +676,7 @@ load_state_(BinState) ->
 
 
 %% @private
-code_change(_, _, State) ->
+code_change(_, State, _) ->
     {ok, State}.
 
 

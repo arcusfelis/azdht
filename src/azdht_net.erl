@@ -119,7 +119,7 @@ query_timeout() ->
     3000.
 
 socket_options(ListenIP) ->
-    [list, inet, {active, true}, {mode, binary}]
+    [inet, {active, true}, {mode, binary}]
     ++ case ListenIP of all -> []; ListenIP -> [{ip, ListenIP}] end.
 
 %
@@ -463,7 +463,7 @@ handle_info(_Msg, State) ->
 terminate(_, _State) ->
     ok.
 
-code_change(_, _, State) ->
+code_change(_, State, _) ->
     {ok, State}.
 
 %% ==================================================================
