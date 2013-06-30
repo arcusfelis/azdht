@@ -2,6 +2,7 @@
 -export([detect_external_ip/0]).
 
 detect_external_ip() ->
+    random:seed(now()),
     detect_external_ip(10, 3, detector_urls(), user_agent(), []).
 
 

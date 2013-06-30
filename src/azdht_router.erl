@@ -310,7 +310,7 @@ unreachable_tab() ->
     azdht_unreachable_cache_tab.
 
 random_node_tag() ->
-    random:seed(os:timestamp()),
+    random:seed(now()),
     random:uniform(max_unreachable()).
 
 %% @private
