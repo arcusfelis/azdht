@@ -167,39 +167,117 @@ find_node(Contact, Target)  ->
     end.
 
 send_data(Contact, DataReq) ->
+    send_data(Contact, DataReq, 3).
+
+send_data(_, _, 0) ->
+    %% Run out of retries.
+    {error, dropped};
+send_data(Contact, DataReq, RetryCounter) ->
     case gen_server:call(srv_name(), {send_data, Contact, DataReq}, 60000) of
         timeout ->
             receive_multi_reply(),
             {error, timeout};
         Values  ->
             self() ! {multi_reply, Values},
-            concat_data_requests(receive_multi_reply()) 
+            case concat_data_requests(DataReq, receive_multi_reply()) of
+                {ok, [Down], []} -> {ok, Down};
+                {ok, Downs, Drops} ->
+                    case send_multi_data(Contact, Drops, RetryCounter-1) of
+                        {ok, ReDowns} ->
+                            {ok, Down, []} = concat_data_requests(DataReq, Downs ++ ReDowns),
+                            {ok, Down};
+                        {error, Reason} ->
+                            {error, Reason}
+                    end
+            end
+    end.
+
+send_multi_data(Contact, [H|T], RetryCounter) ->
+    %% TODO: This code is sequential, can be parallel.
+    case send_data(Contact, H, RetryCounter) of
+        {ok, Down} ->
+            case send_multi_data(Contact, T, RetryCounter) of
+                {ok, Downs} ->
+                    {ok, [Down|Downs]};
+                {error, Reason} -> {error, Reason}
+            end;
+        {error, Reason} -> {error, Reason}
     end.
 
 %% @private
-concat_data_requests([_|_]=Values) ->
+concat_data_requests(DataReq, [_|_]=Values) ->
     Values1 = lists:keysort(#data_request.start_position, Values),
-    concat_data_requests_1(Values1).
+    concat_data_requests_1(DataReq, Values1).
 
 %% @private
-concat_data_requests_1([H|T]) ->
-    concat_data_requests_2(T, H).
+concat_data_requests_1(DataReq, [H|T]) ->
+    concat_data_requests_2(DataReq, T, H, [], []).
 
 %% @private
 concat_data_requests_2(
-    [ #data_request{start_position=HS, length=HL, data=HD, total_length=TL, key=K}|T],
-    A=#data_request{start_position=AS, length=AL, data=AD, total_length=TL, key=K})
+    Q,
+    [ #data_request{start_position=HS, length=HL, data=HD, total_length=TL}|T],
+    A=#data_request{start_position=AS, length=AL, data=AD, total_length=TL},
+    Downloaded, Dropped)
         when AS + AL =:= HS, HS + HL =< TL ->
     A2 = A#data_request{
         length=AL+HL,
         data = <<AD/binary, HD/binary>>},
-    concat_data_requests_2(T, A2);
-concat_data_requests_2([], A) ->
-    {ok, A};
-concat_data_requests_2([H|_], A) ->
-    lager:debug("H: ~s~nA: ~s", [pretty(H), pretty(A)]),
-    {error, dropped_packet}.
+    concat_data_requests_2(Q, T, A2, Downloaded, Dropped);
+concat_data_requests_2(
+   Q,
+   [H=#data_request{start_position=HS, length=HL, total_length=TL}|T],
+    A=#data_request{start_position=AS, length=AL, total_length=TL},
+    Downloaded, Dropped) when HS + HL =< TL ->
+    DS = AS + AL,
+    DL = HS - DS,
+    %% Detect dropped packet
+    D = Q#data_request{start_position=DS, length=DL, total_length=TL},
+    concat_data_requests_2(Q, T, H, [A|Downloaded], [D|Dropped]);
+concat_data_requests_2(
+      #data_request{length=QL},
+    [],
+    A=#data_request{start_position=AS, length=AL, total_length=TL},
+    Downloaded, Dropped)
+    when AS + AL =:= TL, QL =:= 0 ->
+    %% unknown length
+    {ok, {[A|Downloaded], Dropped}};
+concat_data_requests_2(
+    A=#data_request{start_position=QS, length=QL},
+    [],
+    A=#data_request{start_position=AS, length=AL},
+    Downloaded, Dropped)
+    when AS + AL =:= QS + QL ->
+    %% known length
+    {ok, {[A|Downloaded], Dropped}};
+concat_data_requests_2(Q, [],
+    A=#data_request{start_position=AS, length=AL, total_length=TL},
+    Downloaded, Dropped) ->
+    DS = AS + AL,
+    DL = TL - DS,
+    %% Detect dropped last packet
+    D = Q#data_request{start_position=DS, length=DL, total_length=TL},
+    {ok, {[A|Downloaded], [D|Dropped]}}.
 
+-ifdef(TEST).
+
+concat_data_requests_test_() ->
+    Q = #data_request{key=k, packet_type=q, transfer_key=tk,
+                      length=0, total_length=0, data= <<>>},
+    R = #data_request{key=k, packet_type=r, transfer_key=tk,
+                      length=5, total_length=20, data= <<0:40>>},
+    %% There are 4 packets of size 5, total size is 20 bytes.
+    R1 = R#data_request{start_position=0},
+    R2 = R#data_request{start_position=5},
+    Q2 = Q#data_request{start_position=5, length=5, total_length=20},
+    R3 = R#data_request{start_position=10},
+    R4 = R#data_request{start_position=15},
+    R34 = R#data_request{start_position=10, length=10, data= <<0:80>>},
+    R1234 = R#data_request{start_position=0, length=20, data= <<0:160>>},
+    [?_assertEqual({ok, {[R34, R1], [Q2]}}, concat_data_requests(Q, [R1,R3,R4]))
+    ,?_assertEqual({ok, {[R1234], []}}, concat_data_requests(Q, [R1,R2,R3,R4]))].
+
+-endif.
 
 %% @doc Request a spoof ID.
 spoof_id(Contact) ->
