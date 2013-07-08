@@ -5,6 +5,7 @@ branches:
 notifications:
   email: arcusfelis@gmail.com
   irc: 
+install: rebar get-deps compile
 script: "escript ./run_common_test.escript"
 env:
   - R16B
