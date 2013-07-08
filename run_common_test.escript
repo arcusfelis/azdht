@@ -6,7 +6,7 @@
 
 main(_) ->
     %% Start networking or `not_alive'.
-    net_kernel:start([azdht_ct]),
+    net_kernel:start([azdht_ct, shortnames]),
     %% Do not want it in `src'.
     %% Compile it by hand before loading (not done by CT).
     {ok, forward_h} = compile:file("test/forward_h.erl",
