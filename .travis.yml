@@ -5,7 +5,7 @@ branches:
 notifications:
   email: arcusfelis@gmail.com
   irc: 
-script: "./ct-run.sh"
+script: "escript ./run_common_test.escript"
 env:
   - R16B
   - R15B03

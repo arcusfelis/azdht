@@ -164,7 +164,7 @@ ping() ->
     [{require, common_conf, azdht_common_config}].
 
 ping(Config) ->
-    io:format("~n======START PING TEST CASE======~n", []),
+    status_log("~n======START PING TEST CASE======~n", []),
     Node1 = ?config(node1, Config),
     Node2 = ?config(node2, Config),
     Contact2 = azdht_node:my_contact(Node2),
@@ -180,7 +180,7 @@ find_node() ->
     [{require, common_conf, azdht_common_config}].
 
 find_node(Config) ->
-    io:format("~n======START FIND NODE TEST CASE======~n", []),
+    status_log("~n======START FIND NODE TEST CASE======~n", []),
     Node1 = ?config(node1, Config),
     Node2 = ?config(node2, Config),
     Contact1 = azdht_node:my_contact(Node1),
@@ -197,7 +197,7 @@ find_node2() ->
     [{require, common_conf, azdht_common_config}].
 
 find_node2(Config) ->
-    io:format("~n======START FIND NODE WITH A MIDDLEMAN TEST CASE======~n", []),
+    status_log("~n======START FIND NODE WITH A MIDDLEMAN TEST CASE======~n", []),
     Node1 = ?config(node1, Config),
     Node2 = ?config(node2, Config),
     Node3 = ?config(node3, Config),
@@ -219,7 +219,7 @@ announce() ->
     [{require, common_conf, azdht_common_config}].
 
 announce(Config) ->
-    io:format("~n======START ANNOUNCE TEST CASE======~n", []),
+    status_log("~n======START ANNOUNCE TEST CASE======~n", []),
     Node1 = ?config(node1, Config),
     Node2 = ?config(node2, Config),
     Contact1 = azdht_node:my_contact(Node1),
@@ -251,7 +251,7 @@ announce(Config) ->
 %% ----------------------------------------------------------------------
 
 prepare_node(Node, NodeName) ->
-    io:format("Prepare node ~p.~n", [Node]),
+    status_log("Prepare node ~p.~n", [Node]),
     rpc:call(Node, code, set_path, [code:get_path()]),
     true = rpc:call(Node, erlang, unregister, [user]),
     IOProxy = spawn(Node, spawn_io_proxy()),
@@ -263,13 +263,17 @@ prepare_node(Node, NodeName) ->
     ok.
 
 spawn_io_proxy() ->
-    User = group_leader(),
+%   User = group_leader(),
+    User = whereis(user),
     fun() -> io_proxy(User) end.
     
 io_proxy(Pid) ->
     receive
         Mess -> Pid ! Mess, io_proxy(Pid)
     end.
+
+status_log(Pattern, Args) ->
+    io:format(user, Pattern, Args).
 
 lager_handlers(NodeName) ->
 %   [Node|_] = string:tokens(atom_to_list(NodeName), "@"),
@@ -284,3 +288,4 @@ stop_app(Node) ->
 
 start_app(Node, AppConfig) ->
     ok = rpc:call(Node, azdht_app, start, [AppConfig]).
+
