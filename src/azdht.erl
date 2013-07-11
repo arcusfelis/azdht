@@ -38,7 +38,7 @@
          request_spoof_id/1]).
 
 
--include_lib("azdht/include/azdht.hrl").
+-include("azdht.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

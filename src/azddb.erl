@@ -1,7 +1,7 @@
 %% Torrent downloader do not support packets with types
 %% `write_request' and `write_reply'.
 -module(azddb).
--include_lib("azdht/include/azdht.hrl").
+-include("azdht.hrl").
 -export([request_data/2,
          download_torrent/1,
          download_torrent/2]).
