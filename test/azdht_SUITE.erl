@@ -207,6 +207,7 @@ find_node2(Config) ->
     %% Just ping Node3 from Node1 and Node2.
     {ok, _} = azdht_node:ping(Node1, Contact3),
     {ok, _} = azdht_node:ping(Node2, Contact3),
+    timer:sleep(100),
     %% Request Node3 from Node1 to lookup for Node2.
     FindNodeResult = azdht_node:find_node(Node1, Contact3, azdht:node_id(Contact2)),
     ct:pal("FindNodeResult ~p", [FindNodeResult]),
