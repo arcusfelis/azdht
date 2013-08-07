@@ -25,7 +25,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include_lib("azdht/include/azdht.hrl").
+-include("azdht.hrl").
 
 table() ->
     azdht_db_tab.
