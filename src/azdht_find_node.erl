@@ -18,7 +18,7 @@
 % Public interface
 -export([find_node/2]).
 
--include_lib("azdht/include/azdht.hrl").
+-include("azdht.hrl").
 
 % gen_server callbacks
 -export([init/1,

@@ -49,7 +49,7 @@
 -define(MAX_TRANSACTION_ID, 16#FFFFFF).
 -define(MAX_UINT, 16#FFFFFFFF).
 
--include_lib("azdht/include/azdht.hrl").
+-include("azdht.hrl").
 %% DHTUDPPacketReply.DHT_HEADER_SIZE
 -define(DHT_REPLY_HEADER_SIZE,
        (8 %% PRUDPPacketReply.PR_HEADER_SIZE

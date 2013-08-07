@@ -63,7 +63,7 @@
 %% Debug.
 -export([node_list/0]).
 
--include_lib("azdht/include/azdht.hrl").
+-include("azdht.hrl").
 -define(in_range(IDExpr, MinExpr, MaxExpr),
     ((IDExpr >= MinExpr) and (IDExpr < MaxExpr))).
 
