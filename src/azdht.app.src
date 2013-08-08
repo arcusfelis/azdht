@@ -1,15 +1,26 @@
 {application, azdht,
-    [
-    {description, "Vuze DHT in Erlang"},
-    {vsn, "0.1"},
-    {applications, [
-        kernel,
-        stdlib,
-        syntax_tools, compiler, lager,
-        crypto, public_key, ssl,
-        gproc
-      ]},
-    {mod, {azdht_app, []}},
-    {env, []}
-    ]
-}.
+    [{description, "Vuze DHT in Erlang"},
+     {vsn, "0.1"},
+     {applications, [kernel,
+                     stdlib,
+                     syntax_tools, compiler, lager,
+                     crypto, public_key, ssl,
+                     gproc
+                    ]},
+     {mod, {azdht_app, []}},
+     {registered, [azdht_sup,
+                   azdht_socket_server,
+                   azdht_router,
+                   azdht_db_server,
+                   azdht_spoof_cache_server]},
+      {modules, []},
+      {env, [
+             %% The port to listen on.
+             {listen_port, 3724},
+
+             %% Where on disk to store the internal persistent
+             %% State for the DHT table
+             {state_filename, "/var/lib/azdht/state"}
+            ]}
+     ]
+    }.
