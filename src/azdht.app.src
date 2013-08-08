@@ -12,7 +12,7 @@
                    azdht_socket_server,
                    azdht_router,
                    azdht_db_server,
-                   azdht_spoof_cache_server]
+                   azdht_spoof_cache_server]},
       {modules, []},
       {env, [
              %% The port to listen on.
