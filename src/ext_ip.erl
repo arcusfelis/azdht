@@ -14,19 +14,28 @@ detect_external_ip(_, 0, _URLs, _Agents, Acc) ->
     {ok, most_popular_element_of_the_list(Acc)};
 detect_external_ip(Attempts, Sources, URLs, Agents, Acc) 
     when Attempts > 0, Sources > 0 ->
-    URL   = random_element(URLs),
-    Agent = random_element(Agents),
-    case lhttpc:request(URL, get, [{<<"User-Agent">>, Agent}], 5000) of
-        {ok, {{200, "OK"}, _Headers, Body}} ->
-            try
-            BodyS = binary_to_list(Body),
-            [A,B,C,D] = string:tokens(BodyS, "."),
-            IP = list_to_tuple([to_integer(X) || X <- [A,B,C,D]]),
-            detect_external_ip(Attempts, Sources-1,
-                               lists:delete(URL, URLs), Agents, [IP|Acc])
-            catch error:_Reason ->
-                detect_external_ip(Attempts-1, Sources,
-                                   lists:delete(URL, URLs), Agents, Acc)
+    URL   = list_to_binary(random_element(URLs)),
+    Agent = list_to_binary(random_element(Agents)),
+    case hackney:request(get, URL, [{<<"User-Agent">>, Agent}],
+                         [{pool, default}, {recv_timeout, 5000}]) of
+        {ok, 200, _Hdrs, Client} ->
+            case hackney:body(Client) of
+                {ok, Body, EatenClient} ->
+                    hackney:close(EatenClient),
+                    try
+                        BodyS = binary_to_list(Body),                        
+                        [A,B,C,D] = string:tokens(BodyS, "."),
+                        IP = list_to_tuple([to_integer(X) || X <- [A,B,C,D]]),
+                        detect_external_ip(Attempts, Sources-1,
+                                           lists:delete(URL, URLs), Agents, [IP|Acc])
+                    catch error:_Reason ->
+                            detect_external_ip(Attempts-1, Sources,
+                                               lists:delete(URL, URLs), Agents, Acc)
+                    end;
+                {error, _Reason} ->
+                    hackney:close(Client),
+                    detect_external_ip(Attempts-1, Sources,
+                                       lists:delete(URL, URLs), Agents, Acc)
             end
     end.
 
