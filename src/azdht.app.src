@@ -4,6 +4,7 @@
      {applications, [kernel,
                      stdlib,
                      syntax_tools, compiler, lager,
+                     lhttpc,
                      crypto, public_key, ssl,
                      gproc
                     ]},
