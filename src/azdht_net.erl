@@ -95,8 +95,8 @@
 
 -record(state, {
     socket :: inet:socket(),
-    sent   :: gb_tree(),
-    tokens :: queue(),
+    sent   :: gb_trees:tree(),
+    tokens :: queue:queue(),
 
     node_address :: address(),
     local_contact :: contact(),
@@ -408,7 +408,7 @@ push_reply(Address, ConnId, Reply, HasContinuation) ->
 %% ==================================================================
 
 init([ListenIP, ListenPort, ExternalIP]) ->
-    {ok, Socket} = gen_udp:open(ListenPort, socket_options(ListenIP)),
+    Socket = open_socket(ListenIP, ListenPort),
     LocalContact = azdht:contact(proto_version_num(supported),
                                           ExternalIP, ListenPort),
     State = #state{socket=Socket,
@@ -522,9 +522,9 @@ handle_info({udp, _Socket, IP, Port, Packet},
                                               MyInstanceId,
                                               {IP, Port},
                                               SocketPid)
-                     catch error:Reason ->
-                        lager:error("Cannot handle a packet because ~p.",
-                                    [Reason]),
+                     catch error:Reason:Stacktrace ->
+                        lager:error("Cannot handle a packet because ~p. stacktrace=~1000p",
+                                    [Reason, Stacktrace]),
                         lager:debug("Packet is ~p.", [Packet]),
                         ok
                      end
@@ -545,6 +545,14 @@ code_change(_, State, _) ->
     {ok, State}.
 
 %% ==================================================================
+%
+open_socket(ListenIP, ListenPort) ->
+    case gen_udp:open(ListenPort, socket_options(ListenIP)) of
+        {ok, Socket} ->
+            Socket;
+        Other ->
+            error({open_socket_failed, #{ip => ListenIP, port => ListenPort, reason => Other}})
+    end.
 
 handle_request_packet(Packet, MyInstanceId, Address, SocketPid) ->
     {RequestHeader, Body} = decode_request_header(Packet),

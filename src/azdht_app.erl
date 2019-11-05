@@ -7,7 +7,6 @@
 %% Callbacks
 -export([start/2, stop/1]).
 
--define(APP, azdht).
 
 start() ->
     start([]).
@@ -15,16 +14,13 @@ start() ->
 start(Config) ->
     %% Delete duplicates, expand compacted config.
     Config1 = lists:ukeysort(1, proplists:unfold(Config)),
-    [application:set_env(?APP, Key, Val)
+    [application:set_env(azdht, Key, Val)
      || {Key, Val} <- Config1],
-    % Load app file.
-    application:load(?APP),
-    {ok, Deps} = application:get_key(?APP, applications),
-    true = lists:all(fun ensure_started/1, Deps),
-    application:start(?APP).
+    {ok, _} = application:ensure_all_started(azdht),
+    ok.
 
 stop() ->
-    application:stop(?APP).
+    application:stop(azdht).
 
 
 %% @private
@@ -39,15 +35,4 @@ start(_Type, _Args) ->
 %% @private
 stop(_State) ->
     ok.
-
-ensure_started(App) ->
-    case application:start(App) of
-        ok ->
-            true;
-        {error, {already_started, App}} ->
-            true;
-        Else ->
-            error_logger:error_msg("Couldn't start ~p: ~p", [App, Else]),
-            Else
-    end.
 

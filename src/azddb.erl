@@ -35,7 +35,7 @@ download_torrent_from_oneof([], _BinIH) ->
 
 %% Get metadata for BinIH from Contact.
 request_data(Contact, BinIH) ->
-    Key = crypto:sha(BinIH),
+    Key = crypto:hash(sha, BinIH),
     %% DDBaseHelpers.getKey(type.getClass()).getHash()
     TransferKey = transfer_key(torrent),
     DataReq = #data_request{
@@ -62,4 +62,4 @@ download_torrent(Contact, BinIH) ->
 
 transfer_key(torrent) ->
     %% DDBaseHelpers.getKey(DDBaseTTTorrent.class);
-    crypto:sha("org.gudy.azureus2.pluginsimpl.local.ddb.DDBaseTTTorrent").
+    crypto:hash(sha, "org.gudy.azureus2.pluginsimpl.local.ddb.DDBaseTTTorrent").
