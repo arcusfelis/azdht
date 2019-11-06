@@ -92,7 +92,7 @@ node_id(#contact{node_id=NodeId}) ->
 %% @pure
 -spec node_id(proto_version(), ipaddr(), portnum()) -> node_id().
 node_id(ProtoVer, IP, Port) ->
-    crypto:sha(node_id_key(ProtoVer, IP, Port)).
+    crypto:hash(sha, node_id_key(ProtoVer, IP, Port)).
 
 %% @pure
 -spec node_id_key(proto_version(), ipaddr(), portnum()) -> iolist().
@@ -265,7 +265,7 @@ generate_spoof_id(#contact{address={IP,_Port}}, SecretKey) ->
                {A,B,C,D}          -> <<A,B,C,D,4,4,4,4>>;
                {A,B,C,D, _,_,_,_} -> <<A:16,B:16,C:16,D:16>>
            end,
-    <<SpoofId:32/big, _/binary>> = crypto:des_ecb_encrypt(SecretKey, Text),
+    <<SpoofId:32/big, _/binary>> = crypto_des_ecb_encrypt(SecretKey, Text),
     SpoofId.
  
  
@@ -446,7 +446,7 @@ random_key() ->
     crypto:strong_rand_bytes(20).
 
 encode_key(Key) ->
-    crypto:sha(Key).
+    crypto:hash(sha, Key).
 
 
 %% DESede/ECB/PKCS5Padding is used here.
@@ -483,8 +483,8 @@ desede(<<K1:8/binary, K2:8/binary, K3:8/binary>>, Plain) ->
 desded(<<K1:8/binary, K2:8/binary, K3:8/binary>>, Cipher) ->
     d(K1, e(K2, d(K3, Cipher))).
 
-e(K, X) -> crypto:des_ecb_encrypt(K, X).
-d(K, X) -> crypto:des_ecb_decrypt(K, X).
+e(K, X) -> crypto_des_ecb_encrypt(K, X).
+d(K, X) -> crypto_des_ecb_decrypt(K, X).
 
 -ifdef(TEST).
 %% DES INPUT BLOCK  = f  o  r  _  _  _  _  _
@@ -493,9 +493,16 @@ d(K, X) -> crypto:des_ecb_decrypt(K, X).
 %% DES OUTPUT BLOCK = FD 29 85 C9 E8 DF 41 40
 pkcs5_padding_test_() ->
     crypto:start(),
-    [?_assertEqual(crypto:des_ecb_encrypt(<<16#0123456789ABCDEF:64>>,
+    [?_assertEqual(crypto_des_ecb_encrypt(<<16#0123456789ABCDEF:64>>,
                                           <<16#666F720505050505:64>>),
                    <<16#FD2985C9E8DF4140:64>>),
      ?_assertEqual(pkcs5_padding(<<16#666F72:24>>),
                    <<16#666F720505050505:64>>)].
 -endif.
+
+
+crypto_des_ecb_encrypt(SecretKey, PlainText) ->
+    crypto:block_encrypt(des_ecb, SecretKey, PlainText).
+
+crypto_des_ecb_decrypt(SecretKey, Data) ->
+    crypto:block_decrypt(des_ecb, SecretKey, Data).

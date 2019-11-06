@@ -5,18 +5,10 @@ branches:
 notifications:
   email: arcusfelis@gmail.com
   irc: 
-install: rebar get-deps compile
-script: "escript ./run_common_test.escript"
-env:
-  - R16B
-  - R15B03
-  - R15B02
-  - R15B01
-  - R15B
-  - R14B04
-  - R14B03
-  - R14B02
-  - R14B01
-  - R14A
-  - R13B04
+install: rebar3 compile
+script: rebar3 ct --config=azdht_test.cfg
 
+matrix:
+  include:
+    - otp_release: 22.0
+    - otp_release: 21.3

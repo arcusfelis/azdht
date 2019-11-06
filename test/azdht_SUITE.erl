@@ -24,7 +24,6 @@
 
 
 suite() ->
-    application:start(crypto),
     [{timetrap, {minutes, 5}}].
 
 %% Setup/Teardown
@@ -36,6 +35,9 @@ end_per_group(_Group, _Config) ->
     ok.
 
 init_per_suite(Config) ->
+    %% Start networking or `not_alive'.
+    net_kernel:start([azdht_ct, shortnames]),
+    application:start(crypto),
     %% Start slave nodes.
     {ok, Node1} = test_server:start_node(node1, slave, []),
     {ok, Node2} = test_server:start_node(node2, slave, []),
@@ -253,14 +255,16 @@ announce(Config) ->
 
 prepare_node(Node, NodeName) ->
     status_log("Prepare node ~p.~n", [Node]),
-    rpc:call(Node, code, set_path, [code:get_path()]),
+    {ok, Cwd} = file:get_cwd(),
+    ok = rpc:call(Node, file, set_cwd, [Cwd]),
+    ok = rpc:call(Node, code, add_paths, [code:get_path()]),
     true = rpc:call(Node, erlang, unregister, [user]),
     IOProxy = spawn(Node, spawn_io_proxy()),
     true = rpc:call(Node, erlang, register, [user, IOProxy]),
     Handlers = lager_handlers(NodeName),
     ok = rpc:call(Node, application, load, [lager]),
     ok = rpc:call(Node, application, set_env, [lager, handlers, Handlers]),
-    ok = rpc:call(Node, application, start, [lager]),
+    {ok,_} = rpc:call(Node, application, ensure_all_started, [lager]),
     ok.
 
 spawn_io_proxy() ->

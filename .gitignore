@@ -5,3 +5,6 @@ log/*
 .eunit
 doc/
 logs/*
+_build
+.*.sw*
+rebar3
